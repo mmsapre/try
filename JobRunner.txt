@@ -1,0 +1,30 @@
+import org.jeasy.batch.core.job.Job;
+import org.jeasy.batch.core.job.JobExecutor;
+import org.jeasy.batch.core.reader.JdbcRecordReader;
+import org.jeasy.batch.core.writer.JdbcRecordWriter;
+import org.jeasy.batch.core.processor.CompositeRecordProcessor;
+import org.jeasy.batch.core.job.BatchJob;
+
+import javax.sql.DataSource;
+
+public class JobRunner {
+    private final DataSource dataSource;
+
+    public JobRunner(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+
+    public void executeJob() {
+        Job job = new BatchJob()
+                .reader(new JdbcRecordReader(dataSource, "SELECT payload FROM requests WHERE status='PENDING'"))
+                .processor(new CompositeRecordProcessor<>(
+                        new OAuthTokenProcessor("client_id", "client_secret", "https://auth.example.com/token"),
+                        new HttpRequestProcessor("https://api.example.com/data", "OAuthToken")
+                ))
+                .writer(new JdbcRecordWriter(dataSource, "INSERT INTO landing_table (response) VALUES (?)"));
+
+        JobExecutor executor = new JobExecutor();
+        executor.submit(job);
+        executor.shutdown();
+    }
+}

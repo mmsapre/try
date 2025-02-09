@@ -1,0 +1,11 @@
+micronaut:
+  application:
+    name: easybatch-jobrunr
+  http:
+    client:
+      read-timeout: 5s
+  jobrunr:
+    background-job-server:
+      enabled: true
+      dashboard-enabled: true
+      port: 8000 # JobRunr Dashboard at http://localhost:8000

@@ -1,0 +1,26 @@
+import io.micronaut.http.annotation.*;
+import javax.inject.Inject;
+
+@Controller("/job")
+public class JobController {
+    @Inject
+    JobRunner jobRunner;
+
+    /**
+     * Trigger job immediately.
+     */
+    @Post("/run")
+    public String runJob(@QueryValue String serviceUrl) {
+        jobRunner.scheduleOneTimeJob("one-time-job", serviceUrl);
+        return "Job scheduled for " + serviceUrl;
+    }
+
+    /**
+     * Schedule a job with CRON expression.
+     */
+    @Post("/schedule")
+    public String scheduleJob(@QueryValue String jobName, @QueryValue String serviceUrl, @QueryValue String cron) {
+        jobRunner.scheduleRecurringJob(jobName, serviceUrl, cron);
+        return "Job '" + jobName + "' scheduled for " + serviceUrl + " with CRON: " + cron;
+    }
+}

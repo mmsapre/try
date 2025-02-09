@@ -1,0 +1,53 @@
+import org.jeasy.batch.core.processor.RecordProcessor;
+import org.jeasy.batch.core.record.Record;
+import org.jeasy.batch.core.record.StringRecord;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.Scanner;
+
+public class OAuthTokenProcessor implements RecordProcessor<Record<String>, Record<String>> {
+    private String clientId;
+    private String clientSecret;
+    private String tokenUrl;
+    private String token;
+
+    public OAuthTokenProcessor(String clientId, String clientSecret, String tokenUrl) {
+        this.clientId = clientId;
+        this.clientSecret = clientSecret;
+        this.tokenUrl = tokenUrl;
+    }
+
+    @Override
+    public Record<String> processRecord(Record<String> record) throws Exception {
+        if (token == null || tokenExpired()) {
+            token = fetchToken();
+        }
+        return new StringRecord(record.getHeader(), token);
+    }
+
+    private String fetchToken() throws Exception {
+        URL url = new URL(tokenUrl);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Authorization", "Basic " +
+                Base64.getEncoder().encodeToString((clientId + ":" + clientSecret).getBytes(StandardCharsets.UTF_8)));
+        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+        conn.setDoOutput(true);
+        conn.getOutputStream().write("grant_type=client_credentials".getBytes(StandardCharsets.UTF_8));
+
+        Scanner scanner = new Scanner(conn.getInputStream(), StandardCharsets.UTF_8);
+        String response = scanner.useDelimiter("\\A").next();
+        scanner.close();
+        return parseToken(response);
+    }
+
+    private String parseToken(String response) {
+        return response.split(":")[1].replaceAll("\"", "").replace("}", "").trim();
+    }
+
+    private boolean tokenExpired() {
+        return false; // Implement logic for expiration check
+    }
+}

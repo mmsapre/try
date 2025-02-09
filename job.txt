@@ -1,0 +1,41 @@
+
+import org.jobrunr.scheduling.BackgroundJob;
+import javax.inject.Singleton;
+import java.util.Collections;
+
+@Singleton
+public class JobRunner {
+    private final HttpPollingProcessor httpPollingProcessor;
+
+    public JobRunner(HttpPollingProcessor httpPollingProcessor) {
+        this.httpPollingProcessor = httpPollingProcessor;
+    }
+
+    /**
+     * Executes a one-time EasyBatch job for polling.
+     */
+    public void executeJob(String serviceUrl) {
+        Job job = new BatchJob()
+                .reader(new IterableRecordReader<>(Collections.singletonList(serviceUrl)))
+                .processor(httpPollingProcessor)
+                .writer(new StandardOutputRecordWriter());
+
+        JobExecutor executor = new JobExecutor();
+        executor.submit(job);
+        executor.shutdown();
+    }
+
+    /**
+     * Schedules a job to run once.
+     */
+    public void scheduleOneTimeJob(String jobName, String serviceUrl) {
+        BackgroundJob.enqueue(() -> executeJob(serviceUrl));
+    }
+
+    /**
+     * Schedules a recurring job using a CRON expression.
+     */
+    public void scheduleRecurringJob(String jobName, String serviceUrl, String cron) {
+        BackgroundJob.scheduleRecurrently(jobName, cron, () -> executeJob(serviceUrl));
+    }
+}
