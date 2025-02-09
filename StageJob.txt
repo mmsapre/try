@@ -1,0 +1,113 @@
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jayway.jsonpath.JsonPath;
+import com.networknt.schema.JsonSchema;
+import com.networknt.schema.JsonSchemaFactory;
+import com.networknt.schema.SpecVersion;
+import com.networknt.schema.ValidationMessage;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.jms.core.JmsTemplate;
+import org.springframework.stereotype.Service;
+import tech.tablesaw.api.Table;
+
+import javax.sql.DataSource;
+import java.io.File;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.*;
+import java.util.stream.Collectors;
+
+@Service
+public class StageJob {
+
+    private final DataSource dataSource;
+    private final JmsTemplate jmsTemplate;
+    private final JsonSchema jsonSchema;
+    private final ObjectMapper objectMapper;
+    private final String jsonPathExpression = "$.items[*]";
+
+    public StageJob(DataSource dataSource, JmsTemplate jmsTemplate) throws Exception {
+        this.dataSource = dataSource;
+        this.jmsTemplate = jmsTemplate;
+        this.jsonSchema = loadJsonSchemaFromResources();
+        this.objectMapper = new ObjectMapper();
+    }
+
+    private JsonSchema loadJsonSchemaFromResources() throws Exception {
+        ClassPathResource resource = new ClassPathResource("schema.json");
+        try (InputStream inputStream = resource.getInputStream();
+             Scanner scanner = new Scanner(inputStream, StandardCharsets.UTF_8.name())) {
+            String schemaContent = scanner.useDelimiter("\\A").next();
+            JsonSchemaFactory factory = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V7);
+            return factory.getSchema(schemaContent);
+        }
+    }
+
+    public RecordProcessor<StageRecord, StageRecord> jsonSchemaValidationProcessor() {
+        return record -> {
+            JsonNode jsonNode = objectMapper.readTree(objectMapper.writeValueAsString(record));
+            Set<ValidationMessage> errors = jsonSchema.validate(jsonNode);
+            if (!errors.isEmpty()) {
+                throw new Exception("JSON Schema Validation Failed: " + errors);
+            }
+            return record;
+        };
+    }
+
+    public RecordProcessor<StageRecord, StageRecord> requiredFieldValidationProcessor() {
+        return record -> {
+            if (record.getBusinessKey() == null || record.getBusinessKey().isEmpty()) {
+                throw new Exception("Invalid Record: Business Key is missing");
+            }
+            if (record.getJsonData() == null || record.getJsonData().isEmpty()) {
+                throw new Exception("Invalid Record: Data Value is missing");
+            }
+            return record;
+        };
+    }
+
+    public RecordProcessor<StageRecord, List<StageRecord>> jsonPathSplittingProcessor() {
+        return record -> {
+            List<String> jsonFragments = JsonPath.read(record.getJsonData(), jsonPathExpression);
+            Table table = Table.create().addColumns(
+                    tech.tablesaw.columns.strings.StringColumn.create("json_data", jsonFragments)
+            );
+            return table.stringColumn("json_data").asList().stream()
+                    .map(json -> {
+                        StageRecord newRecord = new StageRecord();
+                        newRecord.setBusinessKey(record.getBusinessKey());
+                        newRecord.setJsonData(json);
+                        return newRecord;
+                    })
+                    .collect(Collectors.toList());
+        };
+    }
+
+    public RecordProcessor<List<StageRecord>, List<StageRecord>> uuidGenerationProcessor() {
+        return records -> {
+            records.forEach(record -> record.setUuid(UUID.randomUUID()));
+            return records;
+        };
+    }
+
+    public JdbcRecordWriter<StageRecord> jdbcWriter() {
+        return new JdbcRecordWriter<>(dataSource,
+                "INSERT INTO stage_table (uuid, business_key, json_data, created_at) VALUES (?, ?, ?, NOW())");
+    }
+
+    public Job processStage() {
+        return new BatchJob()
+                .reader(new FileRecordReader(new File("/data/input.json")))
+                .processor(jsonSchemaValidationProcessor())
+                .processor(requiredFieldValidationProcessor())
+                .processor(jsonPathSplittingProcessor())
+                .processor(uuidGenerationProcessor())
+                .writer(jdbcWriter())
+                .writer(records -> records.forEach(record ->
+                        jmsTemplate.convertAndSend("stage.success.queue",
+                                "Successfully processed record with UUID: " + record.getUuid())))
+                .build();
+    }
+}
