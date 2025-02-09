@@ -1,0 +1,31 @@
+import java.util.UUID;
+
+public class StageRecord {
+    private UUID uuid;
+    private String businessKey;
+    private String jsonData;  // Stores the extracted JSON from JSONPath
+
+    public UUID getUuid() {
+        return uuid;
+    }
+
+    public void setUuid(UUID uuid) {
+        this.uuid = uuid;
+    }
+
+    public String getBusinessKey() {
+        return businessKey;
+    }
+
+    public void setBusinessKey(String businessKey) {
+        this.businessKey = businessKey;
+    }
+
+    public String getJsonData() {
+        return jsonData;
+    }
+
+    public void setJsonData(String jsonData) {
+        this.jsonData = jsonData;
+    }
+}
