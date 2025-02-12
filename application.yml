@@ -1,0 +1,7 @@
+server:
+  port: 8080
+
+gridSearch:
+  numAnts: [5, 10, 15] 
+  iterations: [20, 50, 100]
+  evaporationRate: [0.05, 0.1, 0.2]  
