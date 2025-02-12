@@ -1,0 +1,35 @@
+
+import java.util.*;
+import java.util.concurrent.*;
+
+public class GridSearchACOService {
+    public static List<Map<String, Object>> optimizeRulesWithACO(List<Map<String, Object>> rules, List<Map<String, Object>> sourceData, List<Map<String, Object>> targetData) throws InterruptedException {
+        List<Map<String, Object>> optimizedRules = Collections.synchronizedList(new ArrayList<>(rules));
+        ExecutorService executor = Executors.newFixedThreadPool(4);
+        List<Future<Map<String, Object>>> futures = new ArrayList<>();
+
+        for (int iter = 0; iter < 50; iter++) {
+            for (int ant = 0; ant < 10; ant++) {
+                futures.add(executor.submit(() -> {
+                    Map<String, Object> newRule = new HashMap<>();
+                    newRule.put("field", "$.income");
+                    newRule.put("operator", ">");
+                    newRule.put("value", 50000);
+                    return newRule;
+                }));
+            }
+
+            for (Future<Map<String, Object>> future : futures) {
+                try {
+                    Map<String, Object> rule = future.get();
+                    if (rule != null) optimizedRules.add(rule);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
+        executor.shutdown();
+        return optimizedRules;
+    }
+}
