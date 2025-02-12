@@ -1,0 +1,47 @@
+
+import java.util.*;
+import java.util.regex.*;
+
+public class JsonPathHelper {
+
+    /**
+     * Extracts JSONPath-based rules from decision tree output.
+     */
+    public static List<Map<String, Object>> extractJsonPathRules(String treeOutput) {
+        List<Map<String, Object>> rules = new ArrayList<>();
+        String[] lines = treeOutput.split("\n");
+
+        Pattern pattern = Pattern.compile("(\\w+)\\s(>|<|==|!=)\\s([\\d.]+):\\s(\\w+)");
+        
+        for (String line : lines) {
+            Matcher matcher = pattern.matcher(line);
+            if (matcher.find()) {
+                String field = matcher.group(1);
+                String operator = matcher.group(2);
+                String value = matcher.group(3);
+                String targetValue = matcher.group(4);
+
+                Map<String, Object> rule = new HashMap<>();
+                rule.put("conditions", Map.of("all", List.of(
+                    Map.of("field", "$." + field, "operator", operator, "value", value)
+                )));
+                rule.put("action", Map.of("targetField", "$.category", "transformation", targetValue));
+
+                rules.add(rule);
+            }
+        }
+
+        printExtractedRules(rules);
+        return rules;
+    }
+
+    /**
+     * Prints extracted rules for debugging.
+     */
+    private static void printExtractedRules(List<Map<String, Object>> rules) {
+        System.out.println("📌 Extracted JSONPath Rules:");
+        for (Map<String, Object> rule : rules) {
+            System.out.println(rule);
+        }
+    }
+}
