@@ -1,0 +1,21 @@
+FUNCTION_BLOCK IncomeFuzzy
+
+VAR_INPUT
+    income : REAL;
+END_VAR
+
+VAR_OUTPUT
+    category : REAL;
+END_VAR
+
+FUZZIFY income
+    TERM low := (0, 1) (30000, 0);
+    TERM medium := (25000, 0) (50000, 1) (75000, 0);
+    TERM high := (50000, 0) (100000, 1);
+END_FUZZIFY
+
+DEFUZZIFY category
+    TERM low := 0;
+    TERM medium := 1;
+    TERM high := 2;
+END_DEFUZZIFY
