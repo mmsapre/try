@@ -1,0 +1,24 @@
+
+import com.example.rules.service.RuleEngineService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/rules")
+public class RuleController {
+
+    @Autowired
+    private RuleEngineService ruleEngineService;
+
+    @PostMapping("/generate")
+    public List<Map<String, Object>> generateRules(@RequestBody Map<String, Object> payload) throws Exception {
+        List<Map<String, Object>> sourceData = (List<Map<String, Object>>) payload.get("source");
+        List<Map<String, Object>> targetData = (List<Map<String, Object>>) payload.get("target");
+        boolean useFuzzyLogic = Boolean.parseBoolean(payload.getOrDefault("useFuzzyLogic", "false").toString());
+
+        return ruleEngineService.generateRules(sourceData, targetData, useFuzzyLogic);
+    }
+}
