@@ -1,0 +1,39 @@
+import net.sourceforge.jFuzzyLogic.FIS;
+import net.sourceforge.jFuzzyLogic.rule.Variable;
+
+public class FuzzyLogicProcessor {
+    private FIS fis;
+
+    /**
+     * Loads fuzzy logic rules from file.
+     */
+    public FuzzyLogicProcessor(String fuzzyFilePath) {
+        fis = FIS.load(fuzzyFilePath, true);
+        if (fis == null) {
+            throw new RuntimeException("Error loading fuzzy logic file: " + fuzzyFilePath);
+        }
+    }
+
+    /**
+     * Converts numerical values into fuzzy categories.
+     */
+    public String getFuzzyCategory(String variable, double value) {
+        fis.setVariable(variable, value);
+        fis.evaluate();
+        Variable fuzzyVar = fis.getVariable(variable);
+        String fuzzyCategory = fuzzyVar.getLinguisticTermBest().getName();
+
+        printFuzzyConversion(variable, value, fuzzyCategory);
+        return fuzzyCategory;
+    }
+
+    /**
+     * Prints fuzzy conversion process for debugging.
+     */
+    private void printFuzzyConversion(String variable, double value, String fuzzyCategory) {
+        System.out.println("🔍 Fuzzy Logic Applied:");
+        System.out.println("   ➤ Variable: " + variable);
+        System.out.println("   ➤ Value: " + value);
+        System.out.println("   ➤ Fuzzy Category: " + fuzzyCategory);
+    }
+}
