@@ -1,0 +1,53 @@
+
+import com.example.rules.util.FuzzyLogicProcessor;
+import com.example.rules.util.JsonPathHelper;
+import org.springframework.stereotype.Service;
+import weka.classifiers.trees.J48;
+import weka.core.*;
+
+import java.util.*;
+import java.util.concurrent.*;
+
+@Service
+public class RuleEngineService {
+    private static final int NUM_THREADS = 4;
+    private final FuzzyLogicProcessor fuzzyLogicProcessor = new FuzzyLogicProcessor("fuzzy_rules.fcl");
+
+    public List<Map<String, Object>> generateRules(List<Map<String, Object>> sourceData, List<Map<String, Object>> targetData, boolean useFuzzyLogic) throws Exception {
+        List<Map<String, Object>> dtRules = extractDecisionTreeRules(sourceData, targetData, useFuzzyLogic);
+        return GridSearchACOService.optimizeRulesWithACO(dtRules, sourceData, targetData);
+    }
+
+    private List<Map<String, Object>> extractDecisionTreeRules(List<Map<String, Object>> sourceData, List<Map<String, Object>> targetData, boolean useFuzzyLogic) throws Exception {
+        ArrayList<Attribute> attributes = new ArrayList<>();
+        for (String key : sourceData.get(0).keySet()) {
+            attributes.add(new Attribute(key, (List<String>) null));
+        }
+        attributes.add(new Attribute("target", (List<String>) null));
+
+        Instances dataset = new Instances("TrainingData", attributes, sourceData.size());
+        dataset.setClassIndex(dataset.numAttributes() - 1);
+
+        for (int i = 0; i < sourceData.size(); i++) {
+            Instance instance = new DenseInstance(attributes.size());
+            Map<String, Object> sourceRow = sourceData.get(i);
+            Map<String, Object> targetRow = targetData.get(i);
+
+            for (int j = 0; j < attributes.size() - 1; j++) {
+                String key = attributes.get(j).name();
+                Object value = sourceRow.getOrDefault(key, "0");
+
+                if (useFuzzyLogic) {
+                    value = fuzzyLogicProcessor.getFuzzyCategory(key, Double.parseDouble(value.toString()));
+                }
+                instance.setValue(attributes.get(j), value.toString());
+            }
+            instance.setValue(attributes.get(attributes.size() - 1), targetRow.values().toArray()[0].toString());
+            dataset.add(instance);
+        }
+
+        J48 tree = new J48();
+        tree.buildClassifier(dataset);
+        return JsonPathHelper.extractJsonPathRules(tree.toString());
+    }
+}
