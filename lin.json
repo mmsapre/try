@@ -1,0 +1,230 @@
+{
+  "eventName": "JMS to DB Transformation",
+  "eventType": "batch_process",
+  "jobId": "batch_2025_02_25_001",
+  "timestamp": "2025-02-25T12:00:00Z",
+  "stages": [
+    {
+      "stage": "JMS Read",
+      "eventType": "jms_read",
+      "source": {
+        "queue": "solaceQueue",
+        "vpn": "solace-vpn",
+        "clientUser": "solace-user"
+      },
+      "input": {
+        "messageId": "12345",
+        "payload": "{ \"id\": 1234 }"
+      },
+      "timestamp": "2025-02-25T12:00:05Z"
+    },
+    {
+      "stage": "Extract ID",
+      "eventType": "transformation",
+      "input": "{ \"id\": 1234 }",
+      "output": "1234",
+      "transformation": "Extracted ID from JMS Message",
+      "timestamp": "2025-02-25T12:00:07Z"
+    },
+    {
+      "stage": "DB Query",
+      "eventType": "database_read",
+      "source": {
+        "table": "source_table",
+        "query": "SELECT xml_data FROM source_table WHERE id = 1234"
+      },
+      "output": "<User><id>1234</id><name>Alice</name></User>",
+      "timestamp": "2025-02-25T12:00:10Z"
+    },
+    {
+      "stage": "XML to Java Transformation",
+      "eventType": "transformation",
+      "input": "<User><id>1234</id><name>Alice</name></User>",
+      "output": "{ \"id\": 1234, \"name\": \"Alice\" }",
+      "transformation": "Converted XML to Java Object",
+      "timestamp": "2025-02-25T12:00:12Z"
+    },
+    {
+      "stage": "DB Insert",
+      "eventType": "database_write",
+      "target": {
+        "table": "transformed_table",
+        "query": "INSERT INTO transformed_table (id, name) VALUES (1234, 'Alice')"
+      },
+      "timestamp": "2025-02-25T12:00:15Z"
+    },
+    {
+      "stage": "JMS Publish",
+      "eventType": "jms_write",
+      "target": {
+        "queue": "processedQueue"
+      },
+      "output": "{ \"id\": 1234 }",
+      "timestamp": "2025-02-25T12:00:18Z"
+    }
+  ]
+}
+
+
+
+==
+
+
+[
+    {
+        "job_id": "c71163a4-ec4c-4fda-b378-2ff108955819",
+        "service_name": "Mastering Service",
+        "stage": "JMS Read (Entity Event)",
+        "event_type": "jms_read",
+        "query": null,
+        "user_name": "admin",
+        "input_data": null,
+        "output_data": {
+            "trst_stage_id": "uuid-456"
+        },
+        "resource_id": "uuid-456",
+        "timestamp": "2025-03-02T11:59:19Z"
+    },
+    {
+        "job_id": "baaa0fd2-c690-44a1-bfe0-ca7ba12ff44f",
+        "service_name": "Mastering Service",
+        "stage": "JMS Read (Custody Event)",
+        "event_type": "jms_read",
+        "query": null,
+        "user_name": "admin",
+        "input_data": null,
+        "output_data": {
+            "cust_stage_id": "uuid-789"
+        },
+        "resource_id": "uuid-789",
+        "timestamp": "2025-03-02T11:59:19Z"
+    },
+    {
+        "job_id": "853d45b0-8ec0-44ce-9aea-7233531afa82",
+        "service_name": "Mastering Service",
+        "stage": "Database Read (Entity Staging)",
+        "event_type": "database_read",
+        "query": "SELECT * FROM stage_trust_entity WHERE trst_stage_id = ?",
+        "user_name": "system",
+        "input_data": {
+            "trst_stage_id": "uuid-456"
+        },
+        "output_data": {
+            "trst_stage_id": "uuid-456",
+            "trstEntity": "ABC Ltd",
+            "LEI": "LEI-001",
+            "source_system": "System A"
+        },
+        "resource_id": "uuid-456",
+        "timestamp": "2025-03-02T11:59:19Z"
+    },
+    {
+        "job_id": "3ef949f7-e832-4b5e-b91b-e3882a6aaa47",
+        "service_name": "Mastering Service",
+        "stage": "Database Read (Custody Staging)",
+        "event_type": "database_read",
+        "query": "SELECT * FROM stage_trust_custody WHERE cust_stage_id = ?",
+        "user_name": "system",
+        "input_data": {
+            "cust_stage_id": "uuid-789"
+        },
+        "output_data": {
+            "cust_stage_id": "uuid-789",
+            "custEntity": "XYZ Ltd",
+            "LE": "LE-002",
+            "source_system": "System B"
+        },
+        "resource_id": "uuid-789",
+        "timestamp": "2025-03-02T11:59:19Z"
+    },
+    {
+        "job_id": "90925714-d2c0-4ddc-b911-8b155527c9f4",
+        "service_name": "Mastering Service",
+        "stage": "Check Master Table for Existing Record",
+        "event_type": "database_read",
+        "query": "SELECT * FROM master_trust_entity WHERE LEI = ? OR LE = ?",
+        "user_name": "system",
+        "input_data": {
+            "LEI": "LEI-001",
+            "LE": "LE-002"
+        },
+        "output_data": {
+            "trust_entity_id": "uuid-999",
+            "existing": true
+        },
+        "resource_id": "uuid-999",
+        "timestamp": "2025-03-02T11:59:19Z"
+    },
+    {
+        "job_id": "80096725-26d8-45c4-aa7f-d556ccc9bc66",
+        "service_name": "Mastering Service",
+        "stage": "Merge Entity & Custody Data",
+        "event_type": "transform",
+        "query": null,
+        "user_name": "system",
+        "input_data": {
+            "trst_stage_id": "uuid-456",
+            "trstEntity": "ABC Ltd",
+            "LEI": "LEI-001",
+            "source_system": "System A",
+            "cust_stage_id": "uuid-789",
+            "custEntity": "XYZ Ltd",
+            "LE": "LE-002",
+            "source_system": "System B"
+        },
+        "output_data": {
+            "trust_entity_id": "uuid-999",
+            "mergedEntity": "ABC Ltd, XYZ Ltd",
+            "mergedLEI": "LEI-001",
+            "mergedLE": "LE-002",
+            "source_systems": [
+                "System A",
+                "System B"
+            ]
+        },
+        "resource_id": "uuid-999",
+        "timestamp": "2025-03-02T11:59:19Z"
+    },
+    {
+        "job_id": "ebc0405e-b2b2-4340-b07a-9cb195385898",
+        "service_name": "Mastering Service",
+        "stage": "Database Write (Update Existing Record)",
+        "event_type": "database_write",
+        "query": "UPDATE master_trust_entity SET mergedEntity = ?, mergedLEI = ?, mergedLE = ? WHERE trust_entity_id = ?",
+        "user_name": "system",
+        "input_data": {
+            "trust_entity_id": "uuid-999",
+            "mergedEntity": "ABC Ltd, XYZ Ltd",
+            "mergedLEI": "LEI-001",
+            "mergedLE": "LE-002",
+            "source_systems": [
+                "System A",
+                "System B"
+            ]
+        },
+        "output_data": null,
+        "resource_id": "uuid-999",
+        "timestamp": "2025-03-02T11:59:19Z"
+    },
+    {
+        "job_id": "a04804b5-338c-429e-be85-32b4a29ed682",
+        "service_name": "Mastering Service",
+        "stage": "JMS Publish",
+        "event_type": "jms_write",
+        "query": null,
+        "user_name": "system",
+        "input_data": {
+            "trust_entity_id": "uuid-999",
+            "mergedEntity": "ABC Ltd, XYZ Ltd",
+            "mergedLEI": "LEI-001",
+            "mergedLE": "LE-002",
+            "source_systems": [
+                "System A",
+                "System B"
+            ]
+        },
+        "output_data": null,
+        "resource_id": "uuid-999",
+        "timestamp": "2025-03-02T11:59:19Z"
+    }
+]
