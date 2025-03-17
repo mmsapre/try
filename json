@@ -21,10 +21,15 @@ public class MongoJsonPathArrayFieldSerializer extends JsonSerializer<Document> 
     private final Set<String> arrayFields;
     private final Map<String, List<String>> jsonPathFilters;
 
-    public MongoJsonPathArrayFieldSerializer(String fields, Map<String, List<String>> jsonPathFilters) {
-        this.squigglyFilter = extractNonArrayFields(fields);
-        this.arrayFields = extractArrayFields(fields);
-        this.jsonPathFilters = jsonPathFilters;
+    public MongoJsonPathArrayFieldSerializer(String fields) {
+        // Extract part before &fld
+        String filteredFields = extractFieldsBeforeFld(fields);
+
+        // Parse fields into filtering rules
+        this.squigglyFilter = extractNonArrayFields(filteredFields);
+        this.arrayFields = extractArrayFields(filteredFields);
+        this.jsonPathFilters = extractArrayFieldFilters(filteredFields);
+
         this.objectMapper = new ObjectMapper();
 
         // Correct Squiggly initialization
@@ -51,26 +56,55 @@ public class MongoJsonPathArrayFieldSerializer extends JsonSerializer<Document> 
     }
 
     /**
-     * Extract fields that are **not arrays** (for Squiggly filtering).
+     * Extracts the portion before `&fld` in the `fields` string.
+     */
+    private String extractFieldsBeforeFld(String fields) {
+        return fields.contains("&fld") ? fields.split("&fld")[0] : fields;
+    }
+
+    /**
+     * Extracts fields that are **not arrays** (for Squiggly filtering).
      */
     private String extractNonArrayFields(String fields) {
         return Arrays.stream(fields.split(","))
-                .filter(f -> !f.contains("[].")) // Exclude array fields
+                .map(String::trim)
+                .filter(f -> !f.contains("[].") && !f.contains("=")) // Exclude array fields and key-value filters
                 .collect(Collectors.joining(","));
     }
 
     /**
-     * Extract only the **array fields** (for JSONPath filtering).
+     * Extracts only **array fields** (for JSONPath filtering).
      */
     private Set<String> extractArrayFields(String fields) {
         return Arrays.stream(fields.split(","))
+                .map(String::trim)
                 .filter(f -> f.contains("[].")) // Include only array fields
-                .map(f -> f.replace("[].", ".")) // Convert to JSONPath format
+                .map(f -> f.split("=")[0].replace("[].", ".")) // Convert to JSONPath format
                 .collect(Collectors.toSet());
     }
 
     /**
-     * Apply JSONPath filtering **only on array fields**.
+     * Extracts array fields along with their **filter values**.
+     */
+    private Map<String, List<String>> extractArrayFieldFilters(String fields) {
+        Map<String, List<String>> filters = new HashMap<>();
+
+        Arrays.stream(fields.split(","))
+                .map(String::trim)
+                .filter(f -> f.contains("[].") && f.contains("=")) // Only array fields with values
+                .forEach(f -> {
+                    String[] parts = f.split("=");
+                    String key = parts[0].replace("[].", "."); // Convert to JSONPath format
+                    String value = parts[1];
+                    filters.putIfAbsent(key, new ArrayList<>());
+                    filters.get(key).add(value);
+                });
+
+        return filters;
+    }
+
+    /**
+     * Applies JSONPath filtering **only on array fields**.
      */
     private String applyJsonPathArrayFiltering(String json, Set<String> arrayFields, Map<String, List<String>> filters) throws Exception {
         Object document = Configuration.defaultConfiguration()
