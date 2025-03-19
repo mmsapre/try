@@ -155,4 +155,89 @@ public static Map<String, List<String>> extractArrayFieldFilters(String fields) 
 
         return filters;
     }
+
+private Object filterJsonObject(Object document, Set<String> arrayFields, Map<String, List<String>> filters) {
+    System.out.println("🔍 Processing Document: " + document);
+
+    for (String field : arrayFields) {
+        // Convert JSON path to correct array wildcard usage
+        String jsonPath = "$." + field.replace("[].", "[*].");
+        System.out.println("\n🔎 Checking JSONPath: " + jsonPath);
+
+        if (filters.containsKey(field)) {
+            List<String> expectedValues = filters.get(field);
+            String filterField = extractFilteringField(field);
+            System.out.println("🔹 Filtering based on: " + filterField + " | Allowed Values: " + expectedValues);
+
+            try {
+                List<Object> fullArray;
+                try {
+                    fullArray = JsonPath.read(document, jsonPath);
+                    System.out.println("📌 Extracted Array from JSONPath: " + fullArray);
+                } catch (Exception e) {
+                    System.out.println("⚠️ Skipping missing path: " + jsonPath);
+                    continue;
+                }
+
+                if (fullArray != null && !fullArray.isEmpty()) {
+                    // ✅ Separate Matched and Unmatched Elements
+                    List<Object> matchedElements = new ArrayList<>();
+                    List<Object> unmatchedElements = new ArrayList<>();
+
+                    for (Object element : fullArray) {
+                        try {
+                            if (element instanceof Map) {
+                                Map<String, Object> obj = (Map<String, Object>) element;
+                                if (obj.containsKey(filterField)) {
+                                    boolean isMatched = expectedValues.contains(obj.get(filterField).toString());
+                                    System.out.println("🔎 Checking: " + obj.get(filterField) + " | Matched: " + isMatched);
+                                    if (isMatched) {
+                                        matchedElements.add(element); // ✅ Keep matched values
+                                    } else {
+                                        unmatchedElements.add(element); // ❌ Store unmatched values for removal
+                                    }
+                                }
+                            }
+                        } catch (Exception e) {
+                            System.out.println("⚠️ Error in filtering logic: " + e.getMessage());
+                        }
+                    }
+
+                    System.out.println("✅ Matched Elements: " + matchedElements);
+                    System.out.println("❌ Unmatched Elements (to be removed): " + unmatchedElements);
+
+                    String fullPath = jsonPath.replace("[*]", ""); // Remove wildcard to target correct path
+                    
+                    // ❌ Remove unmatched elements from JSON Path
+                    for (Object unmatched : unmatchedElements) {
+                        try {
+                            System.out.println("🗑 Removing Unmatched Element: " + unmatched);
+                            document = JsonPath.parse(document).delete(fullPath + "[?(@ == " + unmatched + ")]").json();
+                        } catch (Exception e) {
+                            System.out.println("⚠️ Error removing unmatched element: " + e.getMessage());
+                        }
+                    }
+
+                    if (!matchedElements.isEmpty()) {
+                        System.out.println("🔄 Updating JSON with Matched Elements...");
+                        document = JsonPath.parse(document).set(fullPath, matchedElements).json();
+                    } else {
+                        // ❌ If no elements match, remove the entire array field
+                        System.out.println("❌ No matches found. Removing entire array: " + fullPath);
+                        try {
+                            document = JsonPath.parse(document).delete(fullPath).json();
+                        } catch (Exception e) {
+                            System.out.println("⚠️ Skipping delete for missing path: " + fullPath);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                System.out.println("⚠️ Skipping path due to error: " + jsonPath);
+            }
+        }
+    }
+    System.out.println("📌 JSON After Processing: " + document);
+    return document;
+}
+
 }
