@@ -1,0 +1,38 @@
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.databind.SerializerProvider;
+import com.fasterxml.jackson.databind.ser.PropertyFilter;
+import com.fasterxml.jackson.databind.ser.PropertyWriter;
+import com.jayway.jsonpath.JsonPath;
+import net.minidev.json.JSONArray;
+
+import java.util.Map;
+
+public class JsonPathFilter extends SimpleBeanPropertyFilter {
+
+    private final Map<String, String> jsonPathFilters;
+
+    public JsonPathFilter(Map<String, String> jsonPathFilters) {
+        this.jsonPathFilters = jsonPathFilters;
+    }
+
+    @Override
+    public void serializeAsField(Object pojo, JsonGenerator gen, SerializerProvider provider, PropertyWriter writer) throws Exception {
+        Object value = writer.getMember().getValue(pojo);
+
+        if (jsonPathFilters.containsKey(writer.getName()) && value != null) {
+            String jsonPathExpression = jsonPathFilters.get(writer.getName());
+            String json = JacksonUtils.toJson(value);
+
+            Object filteredResult = JsonPath.read(json, jsonPathExpression);
+
+            // Convert single-element JSONArray to object
+            if (filteredResult instanceof JSONArray && ((JSONArray) filteredResult).size() == 1) {
+                value = ((JSONArray) filteredResult).get(0);
+            } else {
+                value = filteredResult;
+            }
+        }
+
+        gen.writeObjectField(writer.getName(), value);
+    }
+}
