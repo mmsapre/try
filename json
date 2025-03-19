@@ -110,4 +110,31 @@ public class JsonPathFilter {
         }
         return jsonPath;
     }
+
+  public static Set<String> extractArrayFields(String fields) {
+        return Arrays.stream(fields.split(","))
+                .map(String::trim)
+                .filter(f -> f.contains("[].")) // Keep only array fields
+                .map(f -> f.split("=")[0]) // Remove value after `=`
+                .collect(Collectors.toSet());
+    }
+
+    /**
+     * **Extracts array fields along with their filter values.**
+     */
+    public static Map<String, List<String>> extractArrayFieldFilters(String fields) {
+        Map<String, List<String>> filters = new HashMap<>();
+        Pattern pattern = Pattern.compile("([^,]+\\[\\]\\.[^=]+)=([^,]+)"); // Match array fields
+
+        Matcher matcher = pattern.matcher(fields);
+        while (matcher.find()) {
+            String key = matcher.group(1).trim(); // Extract the JSONPath field
+            String value = matcher.group(2).trim(); // Extract the filter value
+
+            filters.putIfAbsent(key, new ArrayList<>());
+            filters.get(key).add(value);
+        }
+
+        return filters;
+    }
 }
