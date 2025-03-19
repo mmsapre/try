@@ -137,4 +137,22 @@ public class JsonPathFilter {
 
         return filters;
     }
+
+public static Map<String, List<String>> extractArrayFieldFilters(String fields) {
+        Map<String, List<String>> filters = new HashMap<>();
+
+        Arrays.stream(fields.split("&"))
+                .map(String::trim)
+                .filter(f -> f.contains("[].") && f.contains("=")) // Keep only array fields with `=`
+                .forEach(f -> {
+                    String[] parts = f.split("=");
+                    String key = parts[0].trim(); // Extract JSONPath field
+                    String value = parts[1].trim(); // Extract filter value
+
+                    filters.putIfAbsent(key, new ArrayList<>());
+                    filters.get(key).add(value);
+                });
+
+        return filters;
+    }
 }
