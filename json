@@ -1,139 +1,113 @@
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.databind.JsonSerializer;
-import com.fasterxml.jackson.databind.SerializerProvider;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.bohnman.squiggly.Squiggly;
-import com.github.bohnman.squiggly.context.provider.SimpleSquigglyContextProvider;
-import com.github.bohnman.squiggly.parser.SquigglyParser;
 import com.jayway.jsonpath.Configuration;
 import com.jayway.jsonpath.JsonPath;
 import com.jayway.jsonpath.Option;
-import org.bson.Document;
-
-import java.io.IOException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.*;
 import java.util.stream.Collectors;
 
-public class MongoJsonPathArrayFieldSerializer extends JsonSerializer<Document> {
+public class JsonPathFilter {
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private final ObjectMapper objectMapper;
-    private final String squigglyFilter;
-    private final Set<String> arrayFields;
-    private final Map<String, List<String>> jsonPathFilters;
+    public String applyJsonPathArrayFiltering(String json, Set<String> arrayFields, Map<String, List<String>> filters) throws Exception {
+        System.out.println("🚀 Original JSON: " + json);
 
-    public MongoJsonPathArrayFieldSerializer(String fields) {
-        // Extract part before &fld
-        String filteredFields = extractFieldsBeforeFld(fields);
-
-        // Parse fields into filtering rules
-        this.squigglyFilter = extractNonArrayFields(filteredFields);
-        this.arrayFields = extractArrayFields(filteredFields);
-        this.jsonPathFilters = extractArrayFieldFilters(filteredFields);
-
-        this.objectMapper = new ObjectMapper();
-
-        // Correct Squiggly initialization
-        Squiggly.init(objectMapper, new SimpleSquigglyContextProvider(new SquigglyParser(), squigglyFilter));
-    }
-
-    @Override
-    public void serialize(Document document, JsonGenerator gen, SerializerProvider serializers) throws IOException {
-        try {
-            // Convert MongoDB Document to JSON string
-            String json = objectMapper.writeValueAsString(document);
-
-            // Apply Squiggly filtering (for non-array fields)
-            String squigglyFilteredJson = objectMapper.writeValueAsString(objectMapper.readTree(json));
-
-            // Apply JSONPath filtering only for array fields
-            String finalFilteredJson = applyJsonPathArrayFiltering(squigglyFilteredJson, arrayFields, jsonPathFilters);
-
-            // Write the final JSON
-            gen.writeRawValue(finalFilteredJson);
-        } catch (Exception e) {
-            throw new IOException("Error in MongoDB custom serialization", e);
-        }
-    }
-
-    /**
-     * Extracts the portion before `&fld` in the `fields` string.
-     */
-    private String extractFieldsBeforeFld(String fields) {
-        return fields.contains("&fld") ? fields.split("&fld")[0] : fields;
-    }
-
-    /**
-     * Extracts fields that are **not arrays** (for Squiggly filtering).
-     */
-    private String extractNonArrayFields(String fields) {
-        return Arrays.stream(fields.split(","))
-                .map(String::trim)
-                .filter(f -> !f.contains("[].") && !f.contains("=")) // Exclude array fields and key-value filters
-                .collect(Collectors.joining(","));
-    }
-
-    /**
-     * Extracts only **array fields** (for JSONPath filtering).
-     */
-    private Set<String> extractArrayFields(String fields) {
-        return Arrays.stream(fields.split(","))
-                .map(String::trim)
-                .filter(f -> f.contains("[].")) // Include only array fields
-                .map(f -> f.split("=")[0].replace("[].", ".")) // Convert to JSONPath format
-                .collect(Collectors.toSet());
-    }
-
-    /**
-     * Extracts array fields along with their **filter values**.
-     */
-    private Map<String, List<String>> extractArrayFieldFilters(String fields) {
-        Map<String, List<String>> filters = new HashMap<>();
-
-        Arrays.stream(fields.split(","))
-                .map(String::trim)
-                .filter(f -> f.contains("[].") && f.contains("=")) // Only array fields with values
-                .forEach(f -> {
-                    String[] parts = f.split("=");
-                    String key = parts[0].replace("[].", "."); // Convert to JSONPath format
-                    String value = parts[1];
-                    filters.putIfAbsent(key, new ArrayList<>());
-                    filters.get(key).add(value);
-                });
-
-        return filters;
-    }
-
-    /**
-     * Applies JSONPath filtering **only on array fields**.
-     */
-    private String applyJsonPathArrayFiltering(String json, Set<String> arrayFields, Map<String, List<String>> filters) throws Exception {
         Object document = Configuration.defaultConfiguration()
                 .addOptions(Option.SUPPRESS_EXCEPTIONS) // Ignore missing fields
                 .jsonProvider()
                 .parse(json);
 
+        boolean isArray = document instanceof List;
+        System.out.println("🔍 JSON is " + (isArray ? "an array" : "a single object"));
+
+        if (isArray) {
+            List<Object> documentList = (List<Object>) document;
+            List<Object> updatedList = documentList.stream()
+                    .map(item -> {
+                        System.out.println("\n--- Processing JSON Object ---");
+                        return filterJsonObject(item, arrayFields, filters);
+                    })
+                    .collect(Collectors.toList());
+
+            String result = objectMapper.writeValueAsString(updatedList);
+            System.out.println("✅ Final Filtered JSON: " + result);
+            return result;
+        } else {
+            String result = objectMapper.writeValueAsString(filterJsonObject(document, arrayFields, filters));
+            System.out.println("✅ Final Filtered JSON: " + result);
+            return result;
+        }
+    }
+
+    private Object filterJsonObject(Object document, Set<String> arrayFields, Map<String, List<String>> filters) {
+        System.out.println("🔍 Processing Document: " + document);
+
         for (String field : arrayFields) {
-            // Convert field name into JSONPath syntax
-            String jsonPath = field;
+            String jsonPath = "$." + field.replace("[].", "[*].");
+            System.out.println("\n🔎 Checking JSONPath: " + jsonPath);
 
-            if (filters.containsKey(jsonPath)) {
-                List<String> expectedValues = filters.get(jsonPath);
+            if (filters.containsKey(field)) {
+                List<String> expectedValues = filters.get(field);
+                String filterField = extractFilteringField(field);
+                System.out.println("🔹 Filtering based on: " + filterField + " | Allowed Values: " + expectedValues);
 
-                // Extract matching elements
-                List<Object> matchingElements = JsonPath.read(document, "$." + jsonPath);
+                try {
+                    List<Object> fullArray;
+                    try {
+                        fullArray = JsonPath.read(document, jsonPath);
+                        System.out.println("📌 Extracted Array from JSONPath: " + fullArray);
+                    } catch (Exception e) {
+                        System.out.println("⚠️ Skipping missing path: " + jsonPath);
+                        continue;
+                    }
 
-                if (matchingElements != null) {
-                    Iterator<Object> iterator = matchingElements.iterator();
-                    while (iterator.hasNext()) {
-                        Object element = iterator.next();
-                        if (!expectedValues.contains(element.toString())) {
-                            iterator.remove();
+                    if (fullArray != null && !fullArray.isEmpty()) {
+                        List<Object> filteredArray = fullArray.stream()
+                                .filter(element -> {
+                                    try {
+                                        if (element instanceof Map) {
+                                            Map<String, Object> obj = (Map<String, Object>) element;
+                                            if (obj.containsKey(filterField)) {
+                                                boolean isMatched = expectedValues.contains(obj.get(filterField).toString());
+                                                System.out.println("🔎 Checking: " + obj.get(filterField) + " | Matched: " + isMatched);
+                                                return isMatched;
+                                            }
+                                        }
+                                    } catch (Exception e) {
+                                        System.out.println("⚠️ Error in filtering logic: " + e.getMessage());
+                                        return false;
+                                    }
+                                    return false;
+                                })
+                                .collect(Collectors.toList());
+
+                        System.out.println("✅ Filtered Array: " + filteredArray);
+
+                        String fullPath = jsonPath.replace("[*]", "");
+                        if (!filteredArray.isEmpty()) {
+                            System.out.println("🔄 Updating JSON with Filtered Array...");
+                            document = JsonPath.parse(document).set(fullPath, filteredArray).json();
+                        } else {
+                            System.out.println("❌ No matches found. Removing array: " + fullPath);
+                            try {
+                                document = JsonPath.parse(document).delete(fullPath).json();
+                            } catch (Exception e) {
+                                System.out.println("⚠️ Skipping delete for missing path: " + fullPath);
+                            }
                         }
                     }
+                } catch (Exception e) {
+                    System.out.println("⚠️ Skipping path due to error: " + jsonPath);
                 }
             }
         }
+        System.out.println("📌 JSON After Processing: " + document);
+        return document;
+    }
 
-        return objectMapper.writeValueAsString(document);
+    private String extractFilteringField(String jsonPath) {
+        if (jsonPath.contains(".")) {
+            return jsonPath.substring(jsonPath.lastIndexOf(".") + 1);
+        }
+        return jsonPath;
     }
 }
