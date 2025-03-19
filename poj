@@ -1,0 +1,119 @@
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.List;
+
+public class InstrumentData {
+
+    private String loadrowid;
+    private String businessKey;
+    private RawJson rawJson;
+    private String endDate;
+
+    // Getters and Setters
+    public String getLoadrowid() { return loadrowid; }
+    public void setLoadrowid(String loadrowid) { this.loadrowid = loadrowid; }
+
+    public String getBusinessKey() { return businessKey; }
+    public void setBusinessKey(String businessKey) { this.businessKey = businessKey; }
+
+    public RawJson getRawJson() { return rawJson; }
+    public void setRawJson(RawJson rawJson) { this.rawJson = rawJson; }
+
+    public String getEndDate() { return endDate; }
+    public void setEndDate(String endDate) { this.endDate = endDate; }
+
+    public static class RawJson {
+        private Instruments instruments;
+
+        public Instruments getInstruments() { return instruments; }
+        public void setInstruments(Instruments instruments) { this.instruments = instruments; }
+    }
+
+    public static class Instruments {
+        private String instrumentId;
+        private String instrumentStatus;
+        private Instrument instrument;
+
+        public String getInstrumentId() { return instrumentId; }
+        public void setInstrumentId(String instrumentId) { this.instrumentId = instrumentId; }
+
+        public String getInstrumentStatus() { return instrumentStatus; }
+        public void setInstrumentStatus(String instrumentStatus) { this.instrumentStatus = instrumentStatus; }
+
+        public Instrument getInstrument() { return instrument; }
+        public void setInstrument(Instrument instrument) { this.instrument = instrument; }
+    }
+
+    public static class Instrument {
+        private Isins isins;
+        private AccountsInvolved accountsInvolved;
+
+        public Isins getIsins() { return isins; }
+        public void setIsins(Isins isins) { this.isins = isins; }
+
+        public AccountsInvolved getAccountsInvolved() { return accountsInvolved; }
+        public void setAccountsInvolved(AccountsInvolved accountsInvolved) { this.accountsInvolved = accountsInvolved; }
+    }
+
+    public static class Isins {
+        private Isin isin;
+
+        public Isin getIsin() { return isin; }
+        public void setIsin(Isin isin) { this.isin = isin; }
+    }
+
+    public static class Isin {
+        private String value;
+
+        public String getValue() { return value; }
+        public void setValue(String value) { this.value = value; }
+    }
+
+    public static class AccountsInvolved {
+        @JsonProperty("accountInvolved")
+        private List<AccountInvolved> accountInvolved;
+
+        public List<AccountInvolved> getAccountInvolved() { return accountInvolved; }
+        public void setAccountInvolved(List<AccountInvolved> accountInvolved) { this.accountInvolved = accountInvolved; }
+    }
+
+    public static class AccountInvolved {
+        private String accountIdentified;
+        private String accountName;
+        private String accountCurrency;
+        private CurrencyCode currencyCode;
+
+        public String getAccountIdentified() { return accountIdentified; }
+        public void setAccountIdentified(String accountIdentified) { this.accountIdentified = accountIdentified; }
+
+        public String getAccountName() { return accountName; }
+        public void setAccountName(String accountName) { this.accountName = accountName; }
+
+        public String getAccountCurrency() { return accountCurrency; }
+        public void setAccountCurrency(String accountCurrency) { this.accountCurrency = accountCurrency; }
+
+        public CurrencyCode getCurrencyCode() { return currencyCode; }
+        public void setCurrencyCode(CurrencyCode currencyCode) { this.currencyCode = currencyCode; }
+    }
+
+    public static class CurrencyCode {
+        private String currencyCode;
+
+        public String getCurrencyCode() { return currencyCode; }
+        public void setCurrencyCode(String currencyCode) { this.currencyCode = currencyCode; }
+    }
+
+    public static void main(String[] args) {
+        try {
+            String json = "{ \"loadrowid\": \"123\", \"businessKey\": \"BK001\", \"rawJson\": { \"instruments\": { \"instrumentId\": \"INST123\", \"instrumentStatus\": \"Active\", \"instrument\": { \"isins\": { \"isin\": { \"value\": \"ISIN12345\" } }, \"accountsInvolved\": { \"accountInvolved\": [{ \"accountIdentified\": \"ACC001\", \"accountName\": \"Account1\", \"accountCurrency\": \"USD\", \"currencyCode\": { \"currencyCode\": \"USD\" } }] } } } }, \"endDate\": \"2025-12-31\" }";
+
+            ObjectMapper mapper = new ObjectMapper();
+            InstrumentData instrumentData = mapper.readValue(json, InstrumentData.class);
+
+            System.out.println("Parsed Instrument ID: " + instrumentData.getRawJson().getInstruments().getInstrumentId());
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
