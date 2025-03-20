@@ -1,0 +1,45 @@
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.databind.JsonSerializer;
+import com.fasterxml.jackson.databind.SerializerProvider;
+import com.jayway.jsonpath.JsonPath;
+import net.minidev.json.JSONArray;
+import java.io.IOException;
+import java.util.Map;
+
+public class JsonPathFilteringSerializer extends JsonSerializer<Object> {
+    private final Map<String, String> jsonPathFilters;
+
+    public JsonPathFilteringSerializer(Map<String, String> jsonPathFilters) {
+        this.jsonPathFilters = jsonPathFilters;
+    }
+
+    @Override
+    public void serialize(Object value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+        if (value == null) {
+            gen.writeNull();
+            return;
+        }
+
+        // Convert object to JSON string
+        String jsonString = JacksonUtils.toJson(value);
+
+        // Apply JSONPath filtering if a filter is present
+        for (Map.Entry<String, String> entry : jsonPathFilters.entrySet()) {
+            if (jsonString.contains(entry.getKey())) {
+                String jsonPathExpression = entry.getValue();
+                Object filteredResult = JsonPath.read(jsonString, jsonPathExpression);
+
+                // Convert JSONArray to single object if applicable
+                if (filteredResult instanceof JSONArray && ((JSONArray) filteredResult).size() == 1) {
+                    filteredResult = ((JSONArray) filteredResult).get(0);
+                }
+
+                gen.writeObject(filteredResult);
+                return;
+            }
+        }
+
+        // Default case: write original value if no filtering applied
+        gen.writeObject(value);
+    }
+}
