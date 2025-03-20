@@ -17,9 +17,32 @@ public class JsonPathFilter extends SimpleBeanPropertyFilter {
 
     @Override
     public void serializeAsField(Object pojo, JsonGenerator gen, SerializerProvider provider, PropertyWriter writer) throws Exception {
-        Object value = writer.getMember().getValue(pojo);
+        Object value = null;
 
-        if (jsonPathFilters.containsKey(writer.getName()) && value != null) {
+        // Attempt to get the value using Jackson
+        try {
+            value = writer.getMember().getValue(pojo);
+        } catch (Exception ignored) {
+        }
+
+        // Fallback to reflection if value is null
+        if (value == null) {
+            try {
+                Field field = pojo.getClass().getDeclaredField(writer.getName());
+                field.setAccessible(true);
+                value = field.get(pojo);
+            } catch (NoSuchFieldException | IllegalAccessException ignored) {
+            }
+        }
+
+        // If value is still null, skip processing
+        if (value == null) {
+            writer.serializeAsField(pojo, gen, provider);
+            return;
+        }
+
+        // Apply JSONPath filtering
+        if (jsonPathFilters.containsKey(writer.getName())) {
             String jsonPathExpression = jsonPathFilters.get(writer.getName());
             String json = JacksonUtils.toJson(value);
 
@@ -33,6 +56,7 @@ public class JsonPathFilter extends SimpleBeanPropertyFilter {
             }
         }
 
+        // Serialize the filtered value
         gen.writeObjectField(writer.getName(), value);
     }
 }
