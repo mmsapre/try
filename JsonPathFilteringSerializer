@@ -23,7 +23,7 @@ public class JsonPathFilteringSerializer extends JsonSerializer<Object> {
         // Convert object to JSON string
         String jsonString = JacksonUtils.toJson(value);
 
-        // Apply JSONPath filtering if a filter is present
+        // Apply JSONPath filtering
         for (Map.Entry<String, String> entry : jsonPathFilters.entrySet()) {
             if (jsonString.contains(entry.getKey())) {
                 String jsonPathExpression = entry.getValue();
@@ -39,7 +39,7 @@ public class JsonPathFilteringSerializer extends JsonSerializer<Object> {
             }
         }
 
-        // Default case: write original value if no filtering applied
+        // Default case: write the original value
         gen.writeObject(value);
     }
 }
