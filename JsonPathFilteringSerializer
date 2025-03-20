@@ -1,45 +1,54 @@
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.SerializerProvider;
+import com.fasterxml.jackson.databind.JavaType;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
 import net.minidev.json.JSONArray;
 import java.io.IOException;
 import java.util.Map;
 
-public class JsonPathFilteringSerializer extends JsonSerializer<Object> {
+public class JsonPathFilteringSerializer<T> extends JsonSerializer<T> {
     private final Map<String, String> jsonPathFilters;
+    private final Class<T> targetClass;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public JsonPathFilteringSerializer(Map<String, String> jsonPathFilters) {
+    public JsonPathFilteringSerializer(Map<String, String> jsonPathFilters, Class<T> targetClass) {
         this.jsonPathFilters = jsonPathFilters;
+        this.targetClass = targetClass;
     }
 
     @Override
-    public void serialize(Object value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
+    public void serialize(T value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
         if (value == null) {
             gen.writeNull();
             return;
         }
 
         // Convert object to JSON string
-        String jsonString = JacksonUtils.toJson(value);
+        String jsonString = objectMapper.writeValueAsString(value);
 
-        // Apply JSONPath filtering
+        // Apply JSONPath filtering if a filter is present
         for (Map.Entry<String, String> entry : jsonPathFilters.entrySet()) {
             if (jsonString.contains(entry.getKey())) {
                 String jsonPathExpression = entry.getValue();
                 Object filteredResult = JsonPath.read(jsonString, jsonPathExpression);
 
-                // Convert JSONArray to single object if applicable
+                // Convert JSONArray to a single object if applicable
                 if (filteredResult instanceof JSONArray && ((JSONArray) filteredResult).size() == 1) {
                     filteredResult = ((JSONArray) filteredResult).get(0);
                 }
 
-                gen.writeObject(filteredResult);
+                // Convert JSONPath result back to the target class
+                JavaType javaType = objectMapper.getTypeFactory().constructType(targetClass);
+                T typedResult = objectMapper.convertValue(filteredResult, javaType);
+
+                gen.writeObject(typedResult);
                 return;
             }
         }
 
-        // Default case: write the original value
+        // Default case: write original value
         gen.writeObject(value);
     }
 }
