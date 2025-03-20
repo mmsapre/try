@@ -25,30 +25,40 @@ public class JsonPathFilteringSerializer<T> extends JsonSerializer<T> {
             return;
         }
 
-        // Convert object to JSON string
+        // Convert the entire object to JSON string for JSONPath evaluation
         String jsonString = objectMapper.writeValueAsString(value);
 
-        // Apply JSONPath filtering if a filter is present
+        System.out.println("Original JSON:\n" + jsonString);
+
+        Object filteredResult = jsonString; // Default to original JSON if no filtering is applied
+
+        // Apply JSONPath filtering globally to the entire JSON structure
         for (Map.Entry<String, String> entry : jsonPathFilters.entrySet()) {
-            if (jsonString.contains(entry.getKey())) {
-                String jsonPathExpression = entry.getValue();
-                Object filteredResult = JsonPath.read(jsonString, jsonPathExpression);
+            try {
+                System.out.println("Applying JSONPath: " + entry.getValue());
+                filteredResult = JsonPath.read(jsonString, entry.getValue());
 
                 // Convert JSONArray to a single object if applicable
                 if (filteredResult instanceof JSONArray && ((JSONArray) filteredResult).size() == 1) {
                     filteredResult = ((JSONArray) filteredResult).get(0);
                 }
 
-                // Convert JSONPath result back to the target class
-                JavaType javaType = objectMapper.getTypeFactory().constructType(targetClass);
-                T typedResult = objectMapper.convertValue(filteredResult, javaType);
-
-                gen.writeObject(typedResult);
-                return;
+                System.out.println("Filtered JSON Output:\n" + objectMapper.writeValueAsString(filteredResult));
+            } catch (Exception e) {
+                System.err.println("JSONPath Evaluation Error: " + e.getMessage());
+                filteredResult = jsonString; // If JSONPath fails, return original JSON
             }
         }
 
-        // Default case: write original value
-        gen.writeObject(value);
+        // Convert JSONPath result back to the target class
+        JavaType javaType = objectMapper.getTypeFactory().constructType(targetClass);
+        T typedResult = objectMapper.convertValue(filteredResult, javaType);
+
+        if (typedResult == null) {
+            System.err.println("WARNING: Failed to convert JSONPath result. Writing original value.");
+            gen.writeObject(value);
+        } else {
+            gen.writeObject(typedResult);
+        }
     }
 }
