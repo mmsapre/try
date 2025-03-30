@@ -1,0 +1,220 @@
+openapi: 3.0.3
+info:
+  title: SQL-like Query API with Select, Joins, and Bool Must Match
+  version: 1.0.0
+  description: API for executing SQL-like queries using JSON input with select aliases, bool must match, joins, and pagination.
+
+tags:
+  - name: Query
+    description: Endpoints for executing SQL-like queries
+  - name: Metadata
+    description: Endpoints for retrieving metadata about tables, columns, and joins
+
+paths:
+  /query:
+    post:
+      tags:
+        - Query
+      summary: Execute a SQL-like query using select with aliases and bool must match
+      operationId: executeQuery
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+      responses:
+        '200':
+          description: Query executed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totalRecords:
+                    type: integer
+                  data:
+                    type: array
+                    items:
+                      type: object
+        '400':
+          description: Invalid query or input
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+  /metadata:
+    get:
+      tags:
+        - Metadata
+      summary: Retrieve available tables, columns, and joins
+      operationId: getMetadata
+      description: Returns the list of available tables, columns, and supported joins for query execution.
+      responses:
+        '200':
+          description: Metadata retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tables:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TableMetadata'
+                  joins:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/JoinMetadata'
+
+components:
+  schemas:
+    QueryRequest:
+      type: object
+      properties:
+        select:
+          type: array
+          description: List of columns with optional table alias and result alias
+          items:
+            $ref: '#/components/schemas/SelectColumn'
+        from:
+          $ref: '#/components/schemas/TableWithAlias'
+        joins:
+          type: array
+          description: List of join operations with table alias and join condition
+          items:
+            $ref: '#/components/schemas/JoinClause'
+        query:
+          $ref: '#/components/schemas/BoolQuery'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+        orderBy:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderBy'
+
+    SelectColumn:
+      type: object
+      required: [field]
+      properties:
+        field:
+          type: string
+          description: Column name with table alias. Example: `"a.name"`
+        alias:
+          type: string
+          description: Result alias for the output. Example: `"userName"`
+          example: "userName"
+
+    TableWithAlias:
+      type: object
+      properties:
+        table:
+          type: string
+          example: "user"
+        alias:
+          type: string
+          example: "a"
+
+    JoinClause:
+      type: object
+      required: [table, alias, on, type]
+      properties:
+        table:
+          type: string
+          example: "profile"
+        alias:
+          type: string
+          example: "b"
+        on:
+          type: string
+          example: "a.user_id = b.user_id"
+        type:
+          type: string
+          enum: [inner, left, right, full]
+          example: "inner"
+
+    BoolQuery:
+      type: object
+      description: Elasticsearch-style bool query with must match
+      properties:
+        bool:
+          type: object
+          properties:
+            must:
+              type: array
+              items:
+                $ref: '#/components/schemas/MatchCondition'
+            should:
+              type: array
+              items:
+                $ref: '#/components/schemas/MatchCondition'
+            must_not:
+              type: array
+              items:
+                $ref: '#/components/schemas/MatchCondition'
+
+    MatchCondition:
+      type: object
+      description: Condition for matching fields using bool must
+      example:
+        match:
+          field_name: "value"
+      properties:
+        match:
+          type: object
+          additionalProperties:
+            type: string
+            description: Field name and its value for matching
+
+    Pagination:
+      type: object
+      properties:
+        limit:
+          type: integer
+          description: Number of records to return
+          example: 10
+        offset:
+          type: integer
+          description: Starting point for records
+          example: 0
+
+    OrderBy:
+      type: object
+      properties:
+        field:
+          type: string
+          description: Column to sort by, with optional alias. Example: `"a.name"`
+        direction:
+          type: string
+          enum: [asc, desc]
+          description: Sorting direction
+          example: "asc"
+
+    TableMetadata:
+      type: object
+      properties:
+        tableName:
+          type: string
+        alias:
+          type: string
+        columns:
+          type: array
+          items:
+            type: string
+
+    JoinMetadata:
+      type: object
+      properties:
+        sourceTable:
+          type: string
+        targetTable:
+          type: string
+        joinType:
+          type: string
+          enum: [inner, left, right, full]
+        joinCondition:
+          type: string
