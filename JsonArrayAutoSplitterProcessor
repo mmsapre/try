@@ -1,0 +1,88 @@
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+import tech.tablesaw.api.Table;
+import tech.tablesaw.io.json.JsonReadOptions;
+
+import java.util.*;
+
+public class JsonArrayAutoSplitterProcessor implements RecordProcessor<String, String> {
+
+    @Override
+    public List<Record<String>> processRecord(Record<String> record) throws Exception {
+        List<Record<String>> output = new ArrayList<>();
+        String input = record.getPayload().trim();
+
+        JSONArray array;
+        JSONObject metadata = new JSONObject();
+
+        // Case 1: input is array
+        if (input.startsWith("[")) {
+            array = new JSONArray(input);
+
+        } else {
+            // Case 2/3: object
+            JSONObject root = new JSONObject(input);
+            ObjectAndPath arraySearch = findFirstArray(root, "");
+
+            if (arraySearch == null) {
+                throw new IllegalArgumentException("No array found in JSON.");
+            }
+
+            array = arraySearch.array;
+
+            // Create metadata by excluding the array key
+            metadata = removePath(root, arraySearch.path);
+        }
+
+        // Use Tablesaw to normalize each item
+        Table table = Table.read().usingOptions(JsonReadOptions.builder(array.toString()).build());
+
+        for (int i = 0; i < table.rowCount(); i++) {
+            JSONObject row = new JSONObject();
+            for (String col : table.columnNames()) {
+                row.put(col, table.column(col).getString(i));
+            }
+
+            // Merge with metadata
+            JSONObject full = new JSONObject(metadata.toString());
+            for (String key : row.keySet()) {
+                full.put(key, row.get(key));
+            }
+
+            output.add(new GenericRecord<>(System.nanoTime(), full.toString()));
+        }
+
+        return output;
+    }
+
+    private record ObjectAndPath(JSONArray array, String path) {}
+
+    private ObjectAndPath findFirstArray(JSONObject obj, String path) {
+        for (String key : obj.keySet()) {
+            Object val = obj.get(key);
+            if (val instanceof JSONArray) {
+                return new ObjectAndPath((JSONArray) val, (path.isEmpty() ? key : path + "." + key));
+            } else if (val instanceof JSONObject) {
+                ObjectAndPath nested = findFirstArray((JSONObject) val, (path.isEmpty() ? key : path + "." + key));
+                if (nested != null) return nested;
+            }
+        }
+        return null;
+    }
+
+    private JSONObject removePath(JSONObject source, String arrayPath) {
+        String[] keys = arrayPath.split("\\.");
+        JSONObject copy = new JSONObject(source.toString());
+        JSONObject cursor = copy;
+
+        for (int i = 0; i < keys.length - 1; i++) {
+            if (cursor.has(keys[i])) {
+                cursor = cursor.getJSONObject(keys[i]);
+            }
+        }
+
+        cursor.remove(keys[keys.length - 1]);
+        return copy;
+    }
+}
