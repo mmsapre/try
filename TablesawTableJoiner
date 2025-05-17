@@ -33,4 +33,24 @@ public class TablesawTableJoiner {
     public Table joinSpecificTables(Table left, Table right, String leftKey, String rightKey) {
         return left.joinOn(leftKey).inner(right, rightKey);
     }
+
+public static Table safeJoinWithSuffix(
+        Table left,
+        Table right,
+        String leftJoinCol,
+        String rightJoinCol,
+        String suffixForRightCols
+) {
+    Set<String> leftCols = new HashSet<>(left.columnNames());
+    Table rightCopy = right.copy();
+
+    for (String col : rightCopy.columnNames()) {
+        if (!col.equals(rightJoinCol) && leftCols.contains(col)) {
+            rightCopy = rightCopy.renameColumn(col, col + suffixForRightCols);
+        }
+    }
+
+    return left.joinOn(leftJoinCol).inner(rightCopy, rightJoinCol);
+}
+
 }
