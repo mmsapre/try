@@ -1,0 +1,36 @@
+import tech.tablesaw.api.Table;
+import tech.tablesaw.api.StringColumn;
+
+import java.util.*;
+
+public class TablesawTableJoiner {
+
+    public Table joinTablesByParent(Map<String, Table> tables, String rootTableName) {
+        Table root = tables.get(rootTableName);
+
+        for (Map.Entry<String, Table> entry : tables.entrySet()) {
+            String name = entry.getKey();
+            if (name.equals(rootTableName)) continue;
+
+            Table child = entry.getValue();
+
+            if (!child.columnNames().contains("parent_id")) continue;
+
+            // Join: child.parent_id == root.id
+            Table joined = root.joinOn("id").inner(child, "parent_id");
+
+            // Drop duplicate join keys if needed
+            if (joined.columnNames().contains("parent_id")) {
+                joined = joined.dropColumns("parent_id");
+            }
+
+            root = joined;
+        }
+
+        return root;
+    }
+
+    public Table joinSpecificTables(Table left, Table right, String leftKey, String rightKey) {
+        return left.joinOn(leftKey).inner(right, rightKey);
+    }
+}
