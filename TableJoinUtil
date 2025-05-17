@@ -4,69 +4,58 @@ import java.util.*;
 
 public class TableJoinUtil {
 
-    /**
-     * Safely joins two Tablesaw tables by renaming overlapping columns (except join key).
-     */
-    public static Table safeJoin(
-            Table left,
-            Table right,
-            String leftJoinKey,
-            String rightJoinKey,
-            String suffixForRightColumns
-    ) {
-        Set<String> leftCols = new HashSet<>(left.columnNames());
-        Map<String, String> renameMap = new HashMap<>();
-
-        for (String col : right.columnNames()) {
-            if (col.equals(rightJoinKey)) continue; // Don't rename join key
-            if (leftCols.contains(col)) {
-                renameMap.put(col, col + suffixForRightColumns);
-            }
-        }
-
-        Table rightRenamed = renameColumnsWorkaround(right, renameMap);
-
-        return left.joinOn(leftJoinKey).inner(rightRenamed, rightJoinKey);
-    }
-
-    /**
-     * Renames columns in a table by cloning them with new names using copy() and setName().
-     */
-    public static Table renameColumnsWorkaround(Table original, Map<String, String> renameMap) {
-        Table newTable = Table.create(original.name());
-
-        for (Column<?> col : original.columns()) {
-            String newName = renameMap.getOrDefault(col.name(), col.name());
-
-            if (newTable.columnNames().contains(newName)) {
-                System.out.println("Skipping duplicate column: " + newName);
-                continue;
-            }
-
-            Column<?> newCol = col.copy();
-            newCol.setName(newName);
-            newTable.addColumns(newCol);
-        }
-
-        return newTable;
-    }
-
-    /**
-     * Joins all child tables (with 'parent_id') to the root table ('root') automatically.
-     */
-    public static Table joinAllChildrenToRoot(Map<String, Table> tables, String suffixPrefix) {
-        Table root = tables.get("root");
+    public static Table joinAllByParentIdOnly(Map<String, Table> tables) {
+        Map<String, Table> tableMap = new HashMap<>(tables);  // working copy
+        Set<String> joinedTables = new HashSet<>();
+        Table result = null;
 
         for (Map.Entry<String, Table> entry : tables.entrySet()) {
-            String name = entry.getKey();
+            String childName = entry.getKey();
             Table child = entry.getValue();
 
-            if (name.equals("root")) continue;
             if (!child.columnNames().contains("parent_id")) continue;
 
-            root = safeJoin(root, child, "id", "parent_id", suffixPrefix + "_" + name);
+            // Find parent table by _row_id
+            Table parent = findParentTable(child, tableMap);
+            if (parent == null) continue;
+
+            Set<String> parentCols = new HashSet<>(parent.columnNames());
+            List<String> toDrop = new ArrayList<>();
+            for (String col : child.columnNames()) {
+                if (!col.equals("parent_id") && parentCols.contains(col)) {
+                    toDrop.add(col);
+                }
+            }
+
+            child = dropColumnsCompat(child, new HashSet<>(toDrop));
+
+            Table joined = parent.joinOn("_row_id").inner(child, "parent_id");
+
+            // Use this as the next parent if it's the deepest node
+            result = joined;
+            joinedTables.add(childName);
         }
 
-        return root;
+        return result;
+    }
+
+    private static Table findParentTable(Table child, Map<String, Table> allTables) {
+        for (Map.Entry<String, Table> entry : allTables.entrySet()) {
+            Table t = entry.getValue();
+            if (t.columnNames().contains("_row_id")) {
+                return t;
+            }
+        }
+        return null;
+    }
+
+    private static Table dropColumnsCompat(Table table, Set<String> columnsToDrop) {
+        List<String> keep = new ArrayList<>();
+        for (String col : table.columnNames()) {
+            if (!columnsToDrop.contains(col)) {
+                keep.add(col);
+            }
+        }
+        return table.select(keep.toArray(new String[0]));
     }
 }
