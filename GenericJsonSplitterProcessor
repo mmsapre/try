@@ -1,0 +1,64 @@
+
+import org.json.*;
+
+import java.util.*;
+
+public class GenericJsonSplitterProcessor implements RecordProcessor<String, String> {
+
+    private final List<Record<String>> results = new ArrayList<>();
+
+    @Override
+    public List<Record<String>> processRecord(Record<String> record) throws Exception {
+        results.clear();
+
+        String input = record.getPayload().trim();
+
+        if (input.startsWith("[")) {
+            JSONArray array = new JSONArray(input);
+            visitArray(array, new JSONObject());
+        } else {
+            JSONObject root = new JSONObject(input);
+            visitObject(root, new JSONObject());
+        }
+
+        return results;
+    }
+
+    private void visitObject(JSONObject current, JSONObject parentMeta) {
+        JSONObject combinedMeta = new JSONObject(parentMeta.toString()); // deep copy
+
+        for (String key : current.keySet()) {
+            Object val = current.get(key);
+
+            if (val instanceof JSONArray) {
+                visitArray((JSONArray) val, combinedMeta);
+            } else if (val instanceof JSONObject) {
+                visitObject((JSONObject) val, combinedMeta);
+            } else {
+                combinedMeta.put(key, val);
+            }
+        }
+    }
+
+    private void visitArray(JSONArray array, JSONObject parentMeta) {
+        for (int i = 0; i < array.length(); i++) {
+            Object item = array.get(i);
+            if (item instanceof JSONObject) {
+                JSONObject row = new JSONObject(parentMeta.toString()); // copy metadata
+                JSONObject obj = (JSONObject) item;
+                for (String k : obj.keySet()) {
+                    row.put(k, obj.get(k));
+                }
+                results.add(new GenericRecord<>(System.nanoTime(), row.toString()));
+
+                // continue processing in case nested arrays exist
+                visitObject(obj, parentMeta);
+            } else {
+                // primitive array values (rare in data APIs)
+                JSONObject single = new JSONObject(parentMeta.toString());
+                single.put("value", item);
+                results.add(new GenericRecord<>(System.nanoTime(), single.toString()));
+            }
+        }
+    }
+}
