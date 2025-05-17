@@ -42,9 +42,27 @@ public class GenericJsonTablesawSplitterProcessor implements RecordProcessor<Str
 
             if (value instanceof JSONArray array) {
                 if (flattenNestedArrays && depth < maxDepth) {
-                    recurseArray(array, currentMeta, nextPath, depth + 1);
-                    return; // process flattened children only
-                } else {
+    for (int i = 0; i < array.length(); i++) {
+        Object item = array.get(i);
+        if (item instanceof JSONObject nestedRow) {
+            // Combine parent metadata + nested row into flat row
+            JSONObject row = new JSONObject(parentMeta.toString());
+            for (String k : obj.keySet()) {
+                if (!k.equals(key)) row.put(k, obj.get(k)); // all except array
+            }
+            for (String field : nestedRow.keySet()) {
+                row.put(field, nestedRow.get(field));
+            }
+            results.add(new GenericRecord<>(System.nanoTime(), row.toString()));
+        } else {
+            // primitive array item
+            JSONObject row = new JSONObject(parentMeta.toString());
+            row.put(key, item.toString());
+            results.add(new GenericRecord<>(System.nanoTime(), row.toString()));
+        }
+    }
+    return; // prevent adding full parent record again
+} else {
                     currentMeta.put(key, array.toString());
                 }
             } else if (value instanceof JSONObject innerObj) {
