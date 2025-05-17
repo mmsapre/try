@@ -4,6 +4,9 @@ import java.util.*;
 
 public class TableJoinUtil {
 
+    /**
+     * Safely joins two Tablesaw tables by renaming overlapping columns (except join key).
+     */
     public static Table safeJoin(
             Table left,
             Table right,
@@ -11,35 +14,59 @@ public class TableJoinUtil {
             String rightJoinKey,
             String suffixForRightColumns
     ) {
-        // Step 1: Build rename map for overlapping columns
         Set<String> leftCols = new HashSet<>(left.columnNames());
         Map<String, String> renameMap = new HashMap<>();
 
         for (String col : right.columnNames()) {
-            if (!col.equals(rightJoinKey) && leftCols.contains(col)) {
+            if (col.equals(rightJoinKey)) continue; // Don't rename join key
+            if (leftCols.contains(col)) {
                 renameMap.put(col, col + suffixForRightColumns);
             }
         }
 
-        // Step 2: Rename right table columns using workaround
         Table rightRenamed = renameColumnsWorkaround(right, renameMap);
 
-        // Step 3: Perform the join
-        Table joined = left.joinOn(leftJoinKey).inner(rightRenamed, rightJoinKey);
-
-        return joined;
+        return left.joinOn(leftJoinKey).inner(rightRenamed, rightJoinKey);
     }
 
+    /**
+     * Renames columns in a table by cloning them with new names using copy() and setName().
+     */
     public static Table renameColumnsWorkaround(Table original, Map<String, String> renameMap) {
         Table newTable = Table.create(original.name());
 
         for (Column<?> col : original.columns()) {
             String newName = renameMap.getOrDefault(col.name(), col.name());
+
+            if (newTable.columnNames().contains(newName)) {
+                System.out.println("Skipping duplicate column: " + newName);
+                continue;
+            }
+
             Column<?> newCol = col.copy();
             newCol.setName(newName);
             newTable.addColumns(newCol);
         }
 
         return newTable;
+    }
+
+    /**
+     * Joins all child tables (with 'parent_id') to the root table ('root') automatically.
+     */
+    public static Table joinAllChildrenToRoot(Map<String, Table> tables, String suffixPrefix) {
+        Table root = tables.get("root");
+
+        for (Map.Entry<String, Table> entry : tables.entrySet()) {
+            String name = entry.getKey();
+            Table child = entry.getValue();
+
+            if (name.equals("root")) continue;
+            if (!child.columnNames().contains("parent_id")) continue;
+
+            root = safeJoin(root, child, "id", "parent_id", suffixPrefix + "_" + name);
+        }
+
+        return root;
     }
 }
