@@ -1,4 +1,6 @@
 
+import org.json.JSONArray;
+import org.json.JSONObject;
 import tech.tablesaw.api.Table;
 import tech.tablesaw.io.json.JsonReadOptions;
 
@@ -35,51 +37,58 @@ public class GenericJsonTablesawSplitterProcessor implements RecordProcessor<Str
         if (depth > maxDepth) return;
 
         JSONObject currentMeta = new JSONObject(parentMeta.toString());
+        JSONObject flatData = new JSONObject();
 
+        // Copy primitive fields first
         for (String key : obj.keySet()) {
             Object value = obj.get(key);
-            String nextPath = path + "." + key;
-
             if (value instanceof JSONArray array) {
                 if (flattenNestedArrays && depth < maxDepth) {
-    for (int i = 0; i < array.length(); i++) {
-        Object item = array.get(i);
-        if (item instanceof JSONObject nestedRow) {
-            // Combine parent metadata + nested row into flat row
-            JSONObject row = new JSONObject(parentMeta.toString());
-            for (String k : obj.keySet()) {
-                if (!k.equals(key)) row.put(k, obj.get(k)); // all except array
-            }
-            for (String field : nestedRow.keySet()) {
-                row.put(field, nestedRow.get(field));
-            }
-            results.add(new GenericRecord<>(System.nanoTime(), row.toString()));
-        } else {
-            // primitive array item
-            JSONObject row = new JSONObject(parentMeta.toString());
-            row.put(key, item.toString());
-            results.add(new GenericRecord<>(System.nanoTime(), row.toString()));
-        }
-    }
-    return; // prevent adding full parent record again
-} else {
-                    currentMeta.put(key, array.toString());
+                    // Handle flattening
+                    for (int i = 0; i < array.length(); i++) {
+                        Object item = array.get(i);
+                        if (item instanceof JSONObject nestedObj) {
+                            JSONObject merged = new JSONObject(currentMeta.toString());
+                            for (String primitiveKey : obj.keySet()) {
+                                if (!(obj.get(primitiveKey) instanceof JSONArray)) {
+                                    merged.put(primitiveKey, obj.get(primitiveKey));
+                                }
+                            }
+                            for (String field : nestedObj.keySet()) {
+                                merged.put(field, nestedObj.get(field));
+                            }
+                            results.add(new GenericRecord<>(System.nanoTime(), merged.toString()));
+                        } else {
+                            JSONObject row = new JSONObject(currentMeta.toString());
+                            row.put(key, item.toString());
+                            results.add(new GenericRecord<>(System.nanoTime(), row.toString()));
+                        }
+                    }
+                    return; // flattened, don't proceed deeper
+                } else {
+                    flatData.put(key, array.toString());
                 }
-            } else if (value instanceof JSONObject innerObj) {
-                recurseObject(innerObj, currentMeta, nextPath, depth + 1);
+            } else if (value instanceof JSONObject nested) {
+                recurseObject(nested, currentMeta, path + "." + key, depth + 1);
+                return;
             } else {
-                currentMeta.put(key, value);
+                flatData.put(key, value);
             }
         }
 
-        results.add(new GenericRecord<>(System.nanoTime(), currentMeta.toString()));
+        // Merge flatData + parentMeta
+        JSONObject output = new JSONObject(currentMeta.toString());
+        for (String key : flatData.keySet()) {
+            output.put(key, flatData.get(key));
+        }
+
+        results.add(new GenericRecord<>(System.nanoTime(), output.toString()));
     }
 
     private void recurseArray(JSONArray array, JSONObject parentMeta, String path, int depth) {
         if (depth > maxDepth) return;
 
         Table table = tryBuildTable(array);
-
         if (table != null) {
             for (int i = 0; i < table.rowCount(); i++) {
                 JSONObject row = new JSONObject(parentMeta.toString());
@@ -95,7 +104,7 @@ public class GenericJsonTablesawSplitterProcessor implements RecordProcessor<Str
                     recurseObject(obj, parentMeta, path, depth + 1);
                 } else {
                     JSONObject row = new JSONObject(parentMeta.toString());
-                    row.put("value", item);
+                    row.put("value", item.toString());
                     results.add(new GenericRecord<>(System.nanoTime(), row.toString()));
                 }
             }
