@@ -1,0 +1,94 @@
+
+import tech.tablesaw.api.Table;
+import tech.tablesaw.io.json.JsonReadOptions;
+
+import java.io.StringReader;
+import java.util.ArrayList;
+import java.util.List;
+
+public class GenericJsonTablesawSplitterProcessor implements RecordProcessor<String, String> {
+
+    private final boolean flattenNestedArrays;
+    private final int maxDepth;
+    private final List<Record<String>> results = new ArrayList<>();
+
+    public GenericJsonTablesawSplitterProcessor(boolean flattenNestedArrays, int maxDepth) {
+        this.flattenNestedArrays = flattenNestedArrays;
+        this.maxDepth = maxDepth;
+    }
+
+    @Override
+    public List<Record<String>> processRecord(Record<String> record) throws Exception {
+        results.clear();
+        String json = record.getPayload().trim();
+
+        if (json.startsWith("[")) {
+            recurseArray(new JSONArray(json), new JSONObject(), "root", 0);
+        } else {
+            recurseObject(new JSONObject(json), new JSONObject(), "root", 0);
+        }
+
+        return results;
+    }
+
+    private void recurseObject(JSONObject obj, JSONObject parentMeta, String path, int depth) {
+        if (depth > maxDepth) return;
+
+        JSONObject currentMeta = new JSONObject(parentMeta.toString());
+
+        for (String key : obj.keySet()) {
+            Object value = obj.get(key);
+            String nextPath = path + "." + key;
+
+            if (value instanceof JSONArray array) {
+                if (flattenNestedArrays && depth < maxDepth) {
+                    recurseArray(array, currentMeta, nextPath, depth + 1);
+                    return; // process flattened children only
+                } else {
+                    currentMeta.put(key, array.toString());
+                }
+            } else if (value instanceof JSONObject innerObj) {
+                recurseObject(innerObj, currentMeta, nextPath, depth + 1);
+            } else {
+                currentMeta.put(key, value);
+            }
+        }
+
+        results.add(new GenericRecord<>(System.nanoTime(), currentMeta.toString()));
+    }
+
+    private void recurseArray(JSONArray array, JSONObject parentMeta, String path, int depth) {
+        if (depth > maxDepth) return;
+
+        Table table = tryBuildTable(array);
+
+        if (table != null) {
+            for (int i = 0; i < table.rowCount(); i++) {
+                JSONObject row = new JSONObject(parentMeta.toString());
+                for (String col : table.columnNames()) {
+                    row.put(col, table.column(col).getString(i));
+                }
+                results.add(new GenericRecord<>(System.nanoTime(), row.toString()));
+            }
+        } else {
+            for (int i = 0; i < array.length(); i++) {
+                Object item = array.get(i);
+                if (item instanceof JSONObject obj) {
+                    recurseObject(obj, parentMeta, path, depth + 1);
+                } else {
+                    JSONObject row = new JSONObject(parentMeta.toString());
+                    row.put("value", item);
+                    results.add(new GenericRecord<>(System.nanoTime(), row.toString()));
+                }
+            }
+        }
+    }
+
+    private Table tryBuildTable(JSONArray array) {
+        try {
+            return Table.read().usingOptions(JsonReadOptions.builder(new StringReader(array.toString())).build());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+}
