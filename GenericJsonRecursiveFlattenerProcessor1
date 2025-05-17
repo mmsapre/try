@@ -1,0 +1,76 @@
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.*;
+
+public class GenericJsonRecursiveFlattenerProcessor implements RecordProcessor<String, String> {
+
+    private final List<Record<String>> results = new ArrayList<>();
+    private final int maxDepth;
+
+    public GenericJsonRecursiveFlattenerProcessor(int maxDepth) {
+        this.maxDepth = maxDepth;
+    }
+
+    @Override
+    public List<Record<String>> processRecord(Record<String> record) {
+        results.clear();
+
+        String payload = record.getPayload().trim();
+        Object root = payload.startsWith("[") ? new JSONArray(payload) : new JSONObject(payload);
+        recurse(root, new JSONObject(), 0);
+
+        return results;
+    }
+
+    private void recurse(Object node, JSONObject parentContext, int depth) {
+        if (depth > maxDepth) return;
+
+        if (node instanceof JSONArray array) {
+            for (int i = 0; i < array.length(); i++) {
+                recurse(array.get(i), new JSONObject(parentContext.toString()), depth + 1);
+            }
+        } else if (node instanceof JSONObject obj) {
+            JSONObject currentContext = new JSONObject(parentContext.toString());
+
+            boolean hasArrayOrObject = false;
+
+            for (String key : obj.keySet()) {
+                Object value = obj.get(key);
+                if (value instanceof JSONArray || value instanceof JSONObject) {
+                    hasArrayOrObject = true;
+                    recurse(value, deepMerge(currentContext, extractScalars(obj)), depth + 1);
+                }
+            }
+
+            if (!hasArrayOrObject) {
+                JSONObject flatRow = deepMerge(currentContext, obj);
+                results.add(new GenericRecord<>(System.nanoTime(), flatRow.toString()));
+            }
+        } else {
+            JSONObject row = new JSONObject(parentContext.toString());
+            row.put("value", node.toString());
+            results.add(new GenericRecord<>(System.nanoTime(), row.toString()));
+        }
+    }
+
+    private JSONObject extractScalars(JSONObject obj) {
+        JSONObject scalars = new JSONObject();
+        for (String key : obj.keySet()) {
+            Object value = obj.get(key);
+            if (!(value instanceof JSONArray) && !(value instanceof JSONObject)) {
+                scalars.put(key, value);
+            }
+        }
+        return scalars;
+    }
+
+    private JSONObject deepMerge(JSONObject base, JSONObject overlay) {
+        JSONObject merged = new JSONObject(base.toString());
+        for (String key : overlay.keySet()) {
+            merged.put(key, overlay.get(key));
+        }
+        return merged;
+    }
+}
