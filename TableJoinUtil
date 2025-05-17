@@ -1,0 +1,45 @@
+import tech.tablesaw.api.*;
+
+import java.util.*;
+
+public class TableJoinUtil {
+
+    public static Table safeJoin(
+            Table left,
+            Table right,
+            String leftJoinKey,
+            String rightJoinKey,
+            String suffixForRightColumns
+    ) {
+        // Step 1: Build rename map for overlapping columns
+        Set<String> leftCols = new HashSet<>(left.columnNames());
+        Map<String, String> renameMap = new HashMap<>();
+
+        for (String col : right.columnNames()) {
+            if (!col.equals(rightJoinKey) && leftCols.contains(col)) {
+                renameMap.put(col, col + suffixForRightColumns);
+            }
+        }
+
+        // Step 2: Rename right table columns using workaround
+        Table rightRenamed = renameColumnsWorkaround(right, renameMap);
+
+        // Step 3: Perform the join
+        Table joined = left.joinOn(leftJoinKey).inner(rightRenamed, rightJoinKey);
+
+        return joined;
+    }
+
+    public static Table renameColumnsWorkaround(Table original, Map<String, String> renameMap) {
+        Table newTable = Table.create(original.name());
+
+        for (Column<?> col : original.columns()) {
+            String newName = renameMap.getOrDefault(col.name(), col.name());
+            Column<?> newCol = col.copy();
+            newCol.setName(newName);
+            newTable.addColumns(newCol);
+        }
+
+        return newTable;
+    }
+}
