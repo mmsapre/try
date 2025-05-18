@@ -1,0 +1,59 @@
+import java.net.URI;
+import java.net.http.*;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import com.fasterxml.jackson.databind.*;
+
+public class EurekaRestDiscoveryClient {
+
+    private static final String EUREKA_BASE_URL = "http://localhost:8761/eureka/apps/";
+    private static final HttpClient httpClient = HttpClient.newHttpClient();
+    private static final ObjectMapper objectMapper = new ObjectMapper();
+
+    // In-memory round-robin tracker
+    private static final Map<String, AtomicInteger> roundRobinIndex = new HashMap<>();
+
+    public static String getServiceUrl(String serviceName) throws Exception {
+        String url = EUREKA_BASE_URL + serviceName.toUpperCase();
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("Accept", "application/json")
+                .GET()
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            throw new RuntimeException("Failed to discover service: " + response.body());
+        }
+
+        JsonNode root = objectMapper.readTree(response.body());
+        JsonNode instancesNode = root.path("application").path("instance");
+
+        List<String> serviceUrls = new ArrayList<>();
+
+        if (instancesNode.isArray()) {
+            for (JsonNode instance : instancesNode) {
+                String ip = instance.path("ipAddr").asText();
+                String port = instance.path("port").path("$").asText();
+                String scheme = instance.path("securePort").path("@enabled").asText().equals("true") ? "https" : "http";
+                serviceUrls.add(scheme + "://" + ip + ":" + port);
+            }
+        } else if (!instancesNode.isMissingNode()) {
+            // Single instance
+            String ip = instancesNode.path("ipAddr").asText();
+            String port = instancesNode.path("port").path("$").asText();
+            String scheme = instancesNode.path("securePort").path("@enabled").asText().equals("true") ? "https" : "http";
+            serviceUrls.add(scheme + "://" + ip + ":" + port);
+        }
+
+        if (serviceUrls.isEmpty()) {
+            throw new RuntimeException("No service instances found for: " + serviceName);
+        }
+
+        // Round-robin load balancer
+        AtomicInteger index = roundRobinIndex.computeIfAbsent(serviceName, k -> new AtomicInteger(0));
+        int selectedIndex = Math.abs(index.getAndIncrement() % serviceUrls.size());
+        return serviceUrls.get(selectedIndex);
+    }
+}
