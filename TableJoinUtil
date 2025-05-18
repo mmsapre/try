@@ -4,21 +4,26 @@ import java.util.*;
 
 public class TableJoinUtil {
 
-    public static Table joinAllByParentIdOnly(Map<String, Table> tables) {
-        Map<String, Table> tableMap = new HashMap<>(tables);  // working copy
-        Set<String> joinedTables = new HashSet<>();
-        Table result = null;
+    public static Table joinAllParentIdLinkedTables(Map<String, Table> tables) {
+        Map<String, Table> tableMap = new HashMap<>(tables);
+        Map<String, Table> joinedMap = new HashMap<>();
 
-        for (Map.Entry<String, Table> entry : tables.entrySet()) {
-            String childName = entry.getKey();
-            Table child = entry.getValue();
+        // Deep copy to avoid mutation
+        for (Map.Entry<String, Table> entry : tableMap.entrySet()) {
+            joinedMap.put(entry.getKey(), entry.getValue().copy());
+        }
 
+        for (Map.Entry<String, Table> childEntry : tableMap.entrySet()) {
+            Table child = childEntry.getValue();
             if (!child.columnNames().contains("parent_id")) continue;
 
-            // Find parent table by _row_id
-            Table parent = findParentTable(child, tableMap);
-            if (parent == null) continue;
+            String parentTableKey = findParentTableKey(child, joinedMap);
+            if (parentTableKey == null) continue;
 
+            Table parent = joinedMap.get(parentTableKey);
+            if (parent == null || !parent.columnNames().contains("_row_id")) continue;
+
+            // Drop overlapping columns except parent_id
             Set<String> parentCols = new HashSet<>(parent.columnNames());
             List<String> toDrop = new ArrayList<>();
             for (String col : child.columnNames()) {
@@ -27,35 +32,37 @@ public class TableJoinUtil {
                 }
             }
 
-            child = dropColumnsCompat(child, new HashSet<>(toDrop));
+            if (!toDrop.isEmpty()) {
+                child = child.removeColumns(toDrop.toArray(new String[0]));
+            }
 
             Table joined = parent.joinOn("_row_id").inner(child, "parent_id");
-
-            // Use this as the next parent if it's the deepest node
-            result = joined;
-            joinedTables.add(childName);
+            joinedMap.put(childEntry.getKey(), joined);
         }
 
-        return result;
+        return mergeAll(joinedMap.values());
     }
 
-    private static Table findParentTable(Table child, Map<String, Table> allTables) {
-        for (Map.Entry<String, Table> entry : allTables.entrySet()) {
+    private static String findParentTableKey(Table child, Map<String, Table> candidates) {
+        for (Map.Entry<String, Table> entry : candidates.entrySet()) {
             Table t = entry.getValue();
             if (t.columnNames().contains("_row_id")) {
-                return t;
+                return entry.getKey();
             }
         }
         return null;
     }
 
-    private static Table dropColumnsCompat(Table table, Set<String> columnsToDrop) {
-        List<String> keep = new ArrayList<>();
-        for (String col : table.columnNames()) {
-            if (!columnsToDrop.contains(col)) {
-                keep.add(col);
-            }
+    private static Table mergeAll(Collection<Table> tables) {
+        Iterator<Table> it = tables.iterator();
+        if (!it.hasNext()) return Table.create("empty");
+
+        Table merged = it.next();
+        while (it.hasNext()) {
+            Table t = it.next();
+            if (!t.structure().equals(merged.structure())) continue;
+            merged = merged.append(t);
         }
-        return table.select(keep.toArray(new String[0]));
+        return merged;
     }
 }
