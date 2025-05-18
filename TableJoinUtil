@@ -49,6 +49,54 @@ public class TableJoinUtil {
         return mergeAll(joinedMap.values());
     }
 
+
+    public static Table joinAllBySpec(Map<String, Table> tables, Map<String, JoinSpec> joinSpecs) {
+        Map<String, Table> working = new HashMap<>();
+
+        // Clean tables and remove sourcePath
+        for (Map.Entry<String, Table> entry : tables.entrySet()) {
+            Table t = entry.getValue();
+            if (t.columnNames().contains("sourcePath")) {
+                t = t.removeColumns("sourcePath");
+            }
+            working.put(entry.getKey(), t.copy());
+        }
+
+        List<Table> joinedResults = new ArrayList<>();
+
+        for (Map.Entry<String, JoinSpec> entry : joinSpecs.entrySet()) {
+            String childKey = entry.getKey();
+            JoinSpec spec = entry.getValue();
+
+            if (!working.containsKey(childKey) || !working.containsKey(spec.joinWith)) continue;
+
+            Table child = working.get(childKey);
+            Table parent = working.get(spec.joinWith);
+
+            if (child.columnCount() <= 1) continue; // skip if only join key present
+            if (parent.rowCount() == 0) continue;   // skip if parent has no rows
+
+            Set<String> parentCols = new HashSet<>(parent.columnNames());
+            List<String> toDrop = new ArrayList<>();
+            for (String col : child.columnNames()) {
+                if (!col.equals(spec.leftKey) && parentCols.contains(col)) {
+                    toDrop.add(col);
+                }
+            }
+
+            if (!toDrop.isEmpty()) {
+                child = child.removeColumns(toDrop.toArray(new String[0]));
+            }
+
+            if (child.columnCount() <= 1) continue;
+
+            Table joined = parent.joinOn(spec.rightKey).leftOuter(child, spec.leftKey);
+            joinedResults.add(joined);
+        }
+
+        return mergeAll(joinedResults);
+    }
+
     private static String findParentTableKey(String childKey, Table child, Map<String, Table> tables) {
         for (Map.Entry<String, Table> entry : tables.entrySet()) {
             String candidateKey = entry.getKey();
