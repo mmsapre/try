@@ -1,0 +1,11 @@
+public class JoinSpec {
+    public String joinWith;
+    public String leftKey;
+    public String rightKey;
+
+    public JoinSpec(String joinWith, String leftKey, String rightKey) {
+        this.joinWith = joinWith;
+        this.leftKey = leftKey;
+        this.rightKey = rightKey;
+    }
+}
