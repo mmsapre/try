@@ -1,0 +1,53 @@
+import tech.tablesaw.api.Table;
+import java.util.*;
+
+public class TableJoinUtil {
+
+    public static Table joinAllParentIdLinkedTables(Map<String, Table> tables) {
+
+        Map<String, Table> working = new LinkedHashMap<>();
+
+        tables.forEach((k, t) -> {
+            if (t.columnNames().contains("sourcePath")) {
+                t = t.removeColumns("sourcePath");
+            }
+            working.put(k, t.copy());
+        });
+
+        for (String childKey : new ArrayList<>(working.keySet())) {
+
+            Table child = working.get(childKey);
+            if (!child.columnNames().contains("parent_id")) continue;
+
+            String parentKey = parentKey(childKey);
+            if (parentKey == null || !working.containsKey(parentKey)) continue;
+
+            Table parent = working.get(parentKey);
+            if (!parent.columnNames().contains("_row_id")) continue;
+
+            Table joined = parent.joinOn("_row_id").leftOuter(child, "parent_id");
+            working.put(childKey, joined);
+        }
+
+        return mergeAll(working.values());
+    }
+
+    private static String parentKey(String childKey) {
+        int idx = childKey.lastIndexOf("_");
+        return idx > 0 ? childKey.substring(0, idx) : null;
+    }
+
+    private static Table mergeAll(Collection<Table> tables) {
+        Iterator<Table> it = tables.iterator();
+        if (!it.hasNext()) return Table.create("empty");
+
+        Table merged = it.next();
+        while (it.hasNext()) {
+            Table t = it.next();
+            if (t.structure().equals(merged.structure())) {
+                merged = merged.append(t);
+            }
+        }
+        return merged;
+    }
+}
