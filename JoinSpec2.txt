@@ -1,0 +1,24 @@
+public class JoinSpec {
+
+    public enum Cardinality {
+        ONE_TO_ONE,
+        ONE_TO_MANY
+    }
+
+    public final String parentTable;
+    public final String childKey;
+    public final String parentKey;
+    public final Cardinality cardinality;
+
+    public JoinSpec(
+            String parentTable,
+            String childKey,
+            String parentKey,
+            Cardinality cardinality
+    ) {
+        this.parentTable = parentTable;
+        this.childKey = childKey;
+        this.parentKey = parentKey;
+        this.cardinality = cardinality;
+    }
+}
