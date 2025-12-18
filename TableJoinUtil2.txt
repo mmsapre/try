@@ -1,0 +1,48 @@
+import tech.tablesaw.api.Table;
+import java.util.*;
+
+public class TableJoinUtil {
+
+    public static Map<String, Table> applyJoins(
+            Map<String, Table> tables,
+            Map<String, List<JoinSpec>> joinSpecMap
+    ) {
+
+        Map<String, Table> working = new LinkedHashMap<>();
+
+        tables.forEach((k, t) -> {
+            if (t.columnNames().contains("sourcePath")) {
+                t = t.removeColumns("sourcePath");
+            }
+            working.put(k, t.copy());
+        });
+
+        for (Map.Entry<String, List<JoinSpec>> entry : joinSpecMap.entrySet()) {
+
+            String childTable = entry.getKey();
+            Table child = working.get(childTable);
+            if (child == null) continue;
+
+            for (JoinSpec spec : entry.getValue()) {
+
+                if (spec.cardinality == JoinSpec.Cardinality.ONE_TO_MANY) {
+                    continue;
+                }
+
+                Table parent = working.get(spec.parentTable);
+                if (parent == null) continue;
+
+                if (!child.columnNames().contains(spec.childKey)) continue;
+                if (!parent.columnNames().contains(spec.parentKey)) continue;
+
+                child =
+                    parent.joinOn(spec.parentKey)
+                          .leftOuter(child, spec.childKey);
+            }
+
+            working.put(childTable, child);
+        }
+
+        return working;
+    }
+}
