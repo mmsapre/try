@@ -1,0 +1,12 @@
+import java.util.*;
+
+public class JoinSpecUtil {
+
+    public static void add(
+            Map<String, List<JoinSpec>> map,
+            String table,
+            JoinSpec spec
+    ) {
+        map.computeIfAbsent(table, k -> new ArrayList<>()).add(spec);
+    }
+}
