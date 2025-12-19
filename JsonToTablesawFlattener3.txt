@@ -1,0 +1,103 @@
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import tech.tablesaw.api.*;
+
+import java.io.IOException;
+import java.time.LocalDate;
+import java.util.*;
+
+public class JsonToTablesawFlattener {
+
+    private final ObjectMapper mapper = new ObjectMapper();
+    private final Map<String, List<Map<String, Object>>> rawTables = new LinkedHashMap<>();
+    private int idCounter = 1;
+
+    public Map<String, Table> flattenJson(String json) throws IOException {
+        JsonNode root = mapper.readTree(json);
+
+        if (root.isArray()) {
+            for (JsonNode n : root) flatten("root", n, null);
+        } else {
+            flatten("root", root, null);
+        }
+
+        Map<String, Table> tables = new LinkedHashMap<>();
+        rawTables.forEach((k, v) -> tables.put(k, toTable(k, v)));
+        return tables;
+    }
+
+    private void flatten(String table, JsonNode node, String parentId) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        String rowId = "r" + (idCounter++);
+
+        row.put("_row_id", rowId);
+        if (parentId != null) row.put("parent_id", parentId);
+
+        node.fields().forEachRemaining(e -> {
+            String key = e.getKey();
+            JsonNode value = e.getValue();
+
+            if (value.isValueNode()) {
+                row.put(key, value.asText());
+            } else if (value.isObject()) {
+                flatten(table + "_" + key, value, rowId);
+            } else if (value.isArray()) {
+                for (JsonNode item : value) {
+                    if (item.isValueNode()) {
+                        Map<String, Object> arr = new LinkedHashMap<>();
+                        arr.put("_row_id", "r" + (idCounter++));
+                        arr.put("parent_id", rowId);
+                        arr.put("value", item.asText());
+                        arr.put("sourcePath", table + "." + key);
+                        add(table + "_" + key, arr);
+                    } else {
+                        flatten(table + "_" + key, item, rowId);
+                    }
+                }
+            }
+        });
+
+        row.put("sourcePath", table);
+        add(table, row);
+    }
+
+    private void add(String table, Map<String, Object> row) {
+        rawTables.computeIfAbsent(table, t -> new ArrayList<>()).add(row);
+    }
+
+    private Table toTable(String name, List<Map<String, Object>> rows) {
+        Map<String, List<Object>> cols = new LinkedHashMap<>();
+        rows.forEach(r -> r.keySet().forEach(k -> cols.computeIfAbsent(k, x -> new ArrayList<>())));
+        rows.forEach(r -> cols.forEach((k, v) -> v.add(r.get(k))));
+
+        Table t = Table.create(name);
+        cols.forEach((k, v) -> t.addColumns(inferColumn(k, v)));
+        return t;
+    }
+
+    private Column<?> inferColumn(String name, List<Object> values) {
+        List<String> s = new ArrayList<>();
+        List<Integer> i = new ArrayList<>();
+        List<Double> d = new ArrayList<>();
+        List<Boolean> b = new ArrayList<>();
+        List<LocalDate> dt = new ArrayList<>();
+
+        boolean ai = true, ad = true, ab = true, adt = true;
+
+        for (Object o : values) {
+            String v = o == null ? "" : o.toString();
+            s.add(v);
+
+            try { i.add(Integer.parseInt(v)); } catch (Exception e) { ai = false; i.add(null); }
+            try { d.add(Double.parseDouble(v)); } catch (Exception e) { ad = false; d.add(null); }
+            try { b.add(Boolean.parseBoolean(v)); } catch (Exception e) { ab = false; b.add(null); }
+            try { dt.add(LocalDate.parse(v)); } catch (Exception e) { adt = false; dt.add(null); }
+        }
+
+        if (ai) return IntColumn.create(name, i);
+        if (ad) return DoubleColumn.create(name, d);
+        if (ab) return BooleanColumn.create(name, b);
+        if (adt) return DateColumn.create(name, dt);
+        return StringColumn.create(name, s);
+    }
+}
