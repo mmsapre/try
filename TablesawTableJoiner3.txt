@@ -1,0 +1,70 @@
+import tech.tablesaw.api.*;
+import tech.tablesaw.api.StringColumn;
+
+import java.util.*;
+
+public class TablesawTableJoiner {
+
+    public static Map<String, Table> joinBySpec(
+            Map<String, Table> tables,
+            Map<String, List<JoinSpec>> joinSpecs
+    ) {
+
+        Map<String, Table> working = new LinkedHashMap<>();
+
+        // Copy + cleanup
+        tables.forEach((k, t) -> {
+            if (t.columnNames().contains("sourcePath")) {
+                t = t.removeColumns("sourcePath");
+            }
+            working.put(k, t.copy());
+        });
+
+        for (Map.Entry<String, List<JoinSpec>> e : joinSpecs.entrySet()) {
+
+            String childKey = e.getKey();
+            if (!working.containsKey(childKey)) continue;
+
+            Table child = working.get(childKey);
+
+            for (JoinSpec spec : e.getValue()) {
+
+                if (!working.containsKey(spec.joinWith)) continue;
+                Table parent = working.get(spec.joinWith);
+
+                // auto detect one-to-many
+                if (spec.cardinality == JoinSpec.Cardinality.ONE_TO_MANY ||
+                        isOneToMany(child, spec.leftKey)) {
+                    continue;
+                }
+
+                Set<String> parentCols = new HashSet<>(parent.columnNames());
+                List<String> drop = new ArrayList<>();
+
+                for (String c : child.columnNames()) {
+                    if (!c.equals(spec.leftKey) && parentCols.contains(c)) {
+                        drop.add(c);
+                    }
+                }
+
+                if (!drop.isEmpty()) {
+                    child = child.removeColumns(drop.toArray(new String[0]));
+                }
+
+                Table joined =
+                        parent.joinOn(spec.rightKey)
+                              .leftOuter(child, spec.leftKey);
+
+                working.put(childKey, joined);
+            }
+        }
+
+        return working;
+    }
+
+    private static boolean isOneToMany(Table child, String fk) {
+        if (!child.columnNames().contains(fk)) return false;
+        StringColumn col = (StringColumn) child.column(fk);
+        return col.countUnique() < col.size();
+    }
+}
