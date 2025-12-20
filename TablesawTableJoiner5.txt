@@ -67,4 +67,87 @@ public class TablesawTableJoiner {
         }
         return t.copy();
     }
+
+public static Table unionByNameDedupRowId(
+        Table base,
+        Table incoming,
+        String rowIdColumn
+) {
+
+    Table aligned = incoming.copy();
+
+    // ─────────────────────────────────────────────
+    // 1. SNAPSHOT schemas (avoid live view issues)
+    // ─────────────────────────────────────────────
+    Set<String> baseCols = new LinkedHashSet<>(base.columnNames());
+    Set<String> alignedCols = new LinkedHashSet<>(aligned.columnNames());
+
+    // ─────────────────────────────────────────────
+    // 2. Add missing columns
+    // ─────────────────────────────────────────────
+    for (Column<?> c : base.columns()) {
+        if (!alignedCols.contains(c.name())) {
+            aligned.addColumns(c.emptyCopy(aligned.rowCount()));
+        }
+    }
+
+    // ─────────────────────────────────────────────
+    // 3. Drop extra columns
+    // ─────────────────────────────────────────────
+    for (String col : alignedCols) {
+        if (!baseCols.contains(col)) {
+            aligned.removeColumns(col);
+        }
+    }
+
+    // ─────────────────────────────────────────────
+    // 4. Reorder columns
+    // ─────────────────────────────────────────────
+    aligned = aligned.retainColumns(
+        baseCols.toArray(new String[0])
+    );
+
+    // ─────────────────────────────────────────────
+    // 5. DROP duplicate row_id (if present)
+    // ─────────────────────────────────────────────
+    if (base.columnNames().contains(rowIdColumn)
+            && aligned.columnNames().contains(rowIdColumn)) {
+
+        Set<Object> existingRowIds = new HashSet<>();
+
+        Column<?> baseRowId = base.column(rowIdColumn);
+        for (int i = 0; i < base.rowCount(); i++) {
+            existingRowIds.add(baseRowId.get(i));
+        }
+
+        Column<?> incomingRowId = aligned.column(rowIdColumn);
+
+        Selection keep = Selection.with();
+        for (int i = 0; i < aligned.rowCount(); i++) {
+            Object val = incomingRowId.get(i);
+            if (val == null || !existingRowIds.contains(val)) {
+                keep.add(i);
+            }
+        }
+
+        aligned = aligned.where(keep);
+    }
+
+    // ─────────────────────────────────────────────
+    // 6. FINAL SAFETY CHECK
+    // ─────────────────────────────────────────────
+    if (!base.structure().equals(aligned.structure())) {
+        throw new IllegalStateException(
+            "Schema mismatch even after unionByName\n" +
+            "Base: " + base.structure() + "\n" +
+            "Aligned: " + aligned.structure()
+        );
+    }
+
+    // ─────────────────────────────────────────────
+    // 7. CONCAT
+    // ─────────────────────────────────────────────
+    return Table.concat(base, aligned);
+}
+
 }
