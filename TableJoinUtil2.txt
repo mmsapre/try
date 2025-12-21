@@ -45,4 +45,36 @@ public class TableJoinUtil {
 
         return working;
     }
+
+public static Table unionByName(Table base, Table incoming) {
+
+    // Snapshot schemas
+    Set<String> baseCols = new LinkedHashSet<>(base.columnNames());
+    Set<String> incomingCols = new LinkedHashSet<>(incoming.columnNames());
+
+    Table aligned = incoming.copy();
+
+    // 1️⃣ Add missing columns
+    for (Column<?> col : base.columns()) {
+        if (!incomingCols.contains(col.name())) {
+            aligned.addColumns(col.emptyCopy(aligned.rowCount()));
+        }
+    }
+
+    // 2️⃣ Drop extra columns
+    for (String col : incomingCols) {
+        if (!baseCols.contains(col)) {
+            aligned.removeColumns(col);
+        }
+    }
+
+    // 3️⃣ Reorder columns
+    aligned = aligned.retainColumns(
+            baseCols.toArray(new String[0])
+    );
+
+    // 4️⃣ Safe concat
+    return Table.concat(base, aligned);
+}
+
 }
