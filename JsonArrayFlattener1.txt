@@ -1,0 +1,56 @@
+import com.fasterxml.jackson.databind.*;
+import java.util.*;
+
+public class JsonArrayFlattener {
+
+    private static void flattenNode(
+            JsonNode node,
+            String path,
+            Map<String, Object> current,
+            List<Map<String, Object>> out
+    ) {
+
+        if (node.isObject()) {
+            node.fields().forEachRemaining(e ->
+                flattenNode(
+                    e.getValue(),
+                    path.isEmpty() ? e.getKey() : path + "." + e.getKey(),
+                    current,
+                    out
+                )
+            );
+
+        } else if (node.isArray()) {
+            for (JsonNode child : node) {
+                Map<String, Object> copy = new LinkedHashMap<>(current);
+                flattenNode(child, path, copy, out);
+            }
+
+        } else {
+            current.put(path, node.isNull() ? null : node.asText());
+        }
+    }
+
+    public static List<Map<String, Object>> flattenArrayJson(String json) throws Exception {
+
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode root = mapper.readTree(json);
+
+        if (!root.isArray()) {
+            throw new IllegalArgumentException("Root JSON must be an array");
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+
+        for (JsonNode element : root) {
+            Map<String, Object> base = new LinkedHashMap<>();
+            flattenNode(element, "", base, result);
+
+            // If no inner array caused row expansion
+            if (!result.contains(base)) {
+                result.add(base);
+            }
+        }
+        return result;
+    }
+}
