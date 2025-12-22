@@ -1,0 +1,42 @@
+import tech.tablesaw.api.Table;
+import java.util.*;
+
+public class TablesawJoiner {
+
+    public static Table joinAll(Map<String, Table> tables) {
+
+        // find root (no parent_id column OR all parent_id null)
+        String rootKey = tables.entrySet().stream()
+            .filter(e -> !e.getValue().columnNames().contains("parent_id")
+                      || e.getValue().stringColumn("parent_id").isMissing().all())
+            .map(Map.Entry::getKey)
+            .findFirst()
+            .orElseThrow();
+
+        Table result = tables.get(rootKey);
+        Set<String> joined = new HashSet<>();
+        joined.add(rootKey);
+
+        boolean progress;
+        do {
+            progress = false;
+
+            for (Map.Entry<String, Table> entry : tables.entrySet()) {
+                String childKey = entry.getKey();
+                if (joined.contains(childKey)) continue;
+
+                Table child = entry.getValue();
+                if (!child.columnNames().contains("parent_id")) continue;
+
+                // universal join rule
+                result = result.joinOn("_row_id")
+                               .leftOuter(child, "parent_id");
+
+                joined.add(childKey);
+                progress = true;
+            }
+        } while (progress);
+
+        return result;
+    }
+}
