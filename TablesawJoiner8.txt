@@ -1,13 +1,10 @@
 import tech.tablesaw.api.Table;
-import tech.tablesaw.api.StringColumn;
-
 import java.util.*;
 
 public class TablesawJoiner {
 
     public static Table joinAll(Map<String, Table> tables) {
 
-        // 1️⃣ Find root table safely
         String rootKey = tables.entrySet().stream()
             .filter(e -> isRootTable(e.getValue()))
             .map(Map.Entry::getKey)
@@ -16,12 +13,10 @@ public class TablesawJoiner {
                 new IllegalStateException("No root table found")
             );
 
-        Table result = tables.get(rootKey);
-
+        Table result = tables.get(rootKey).copy();
         Set<String> joined = new HashSet<>();
         joined.add(rootKey);
 
-        // 2️⃣ Iteratively join children
         boolean progress;
         do {
             progress = false;
@@ -33,9 +28,15 @@ public class TablesawJoiner {
                 Table child = entry.getValue();
                 if (!child.columnNames().contains("parent_id")) continue;
 
+                // 🔥 IMPORTANT: remove duplicate lineage columns
+                Table childForJoin = child.copy();
+
+                childForJoin.removeColumns("_row_id");
+                childForJoin.removeColumns("parent_id");
+
                 // universal join rule
                 result = result.joinOn("_row_id")
-                               .leftOuter(child, "parent_id");
+                               .leftOuter(childForJoin, "parent_id");
 
                 joined.add(childKey);
                 progress = true;
@@ -45,16 +46,9 @@ public class TablesawJoiner {
         return result;
     }
 
-    // ✅ Tablesaw-safe root detection
     private static boolean isRootTable(Table table) {
-
-        if (!table.columnNames().contains("parent_id")) {
-            return true;
-        }
-
-        StringColumn parentCol = table.stringColumn("parent_id");
-
-        // ALL rows missing → root
-        return parentCol.countMissing() == parentCol.size();
+        if (!table.columnNames().contains("parent_id")) return true;
+        return table.stringColumn("parent_id").countMissing()
+                == table.rowCount();
     }
 }
