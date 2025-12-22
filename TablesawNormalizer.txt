@@ -1,0 +1,25 @@
+import tech.tablesaw.api.*;
+import java.util.*;
+
+public class TablesawNormalizer {
+
+    public static Table toTable(List<Map<String, Object>> rows) {
+
+        LinkedHashSet<String> columns = new LinkedHashSet<>();
+        rows.forEach(r -> columns.addAll(r.keySet()));
+
+        Map<String, StringColumn> colMap = new LinkedHashMap<>();
+        columns.forEach(c -> colMap.put(c, StringColumn.create(c)));
+
+        Table table = Table.create("t");
+        colMap.values().forEach(table::addColumns);
+
+        for (Map<String, Object> row : rows) {
+            for (String c : columns) {
+                Object v = row.get(c);
+                colMap.get(c).append(v == null ? null : v.toString());
+            }
+        }
+        return table;
+    }
+}
