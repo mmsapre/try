@@ -1,0 +1,86 @@
+import com.fasterxml.jackson.databind.*;
+import tech.tablesaw.api.*;
+
+import java.util.*;
+
+public class JsonToTablesawFlattener {
+
+    private final ObjectMapper mapper = new ObjectMapper();
+    private final Map<String, List<Map<String, Object>>> rawTables = new LinkedHashMap<>();
+    private final Map<String, JoinSpec.Cardinality> cardinalityByPath;
+    private int id = 1;
+
+    public JsonToTablesawFlattener(
+            Map<String, JoinSpec.Cardinality> cardinalityByPath
+    ) {
+        this.cardinalityByPath = cardinalityByPath;
+    }
+
+    public Map<String, Table> flatten(String json) throws Exception {
+        JsonNode root = mapper.readTree(json);
+        walk("root", root, null);
+
+        Map<String, Table> tables = new LinkedHashMap<>();
+        rawTables.forEach((k, v) -> tables.put(k, toTable(k, v)));
+        return tables;
+    }
+
+    private void walk(String table, JsonNode node, String parentId) {
+
+        Map<String, Object> row = new LinkedHashMap<>();
+        String rowId = "r" + (id++);
+
+        row.put("_row_id", rowId);
+        if (parentId != null) row.put("parent_id", parentId);
+
+        node.fields().forEachRemaining(e -> {
+
+            String key = e.getKey();
+            JsonNode val = e.getValue();
+            String path = table + "." + key;
+
+            if (val.isValueNode() || val.isNull()) {
+                row.put(key, val.isNull() ? null : val.asText());
+            }
+            else if (val.isObject()) {
+                walk(table + "_" + key, val, rowId);
+            }
+            else if (val.isArray()) {
+
+                JoinSpec.Cardinality card =
+                        cardinalityByPath.getOrDefault(
+                                path,
+                                JoinSpec.Cardinality.ONE_TO_ONE
+                        );
+
+                if (card == JoinSpec.Cardinality.ONE_TO_MANY) {
+                    // preserve array
+                    row.put(key, mapper.convertValue(val, List.class));
+                } else {
+                    // explode
+                    for (JsonNode item : val) {
+                        walk(table + "_" + key, item, rowId);
+                    }
+                }
+            }
+        });
+
+        rawTables.computeIfAbsent(table, t -> new ArrayList<>()).add(row);
+    }
+
+    private Table toTable(String name, List<Map<String, Object>> rows) {
+
+        Map<String, List<Object>> cols = new LinkedHashMap<>();
+        rows.forEach(r -> r.keySet().forEach(k -> cols.computeIfAbsent(k, x -> new ArrayList<>())));
+        rows.forEach(r -> cols.forEach((k, v) -> v.add(r.get(k))));
+
+        Table t = Table.create(name);
+        cols.forEach((k, v) ->
+                t.addColumns(StringColumn.create(
+                        k,
+                        v.stream().map(x -> x == null ? null : x.toString()).toList()
+                ))
+        );
+        return t;
+    }
+}
