@@ -1,0 +1,22 @@
+import tech.tablesaw.api.Table;
+import java.util.*;
+
+public class TablesawSplitter {
+
+    public static Map<String, Table> splitBySourcePath(
+            List<Map<String, Object>> rows
+    ) {
+        Map<String, List<Map<String, Object>>> grouped = new LinkedHashMap<>();
+
+        for (Map<String, Object> row : rows) {
+            String path = (String) row.get("sourcePath");
+            grouped.computeIfAbsent(path, k -> new ArrayList<>()).add(row);
+        }
+
+        Map<String, Table> tables = new LinkedHashMap<>();
+        grouped.forEach((k, v) ->
+            tables.put(k, TablesawNormalizer.toTable(v))
+        );
+        return tables;
+    }
+}
