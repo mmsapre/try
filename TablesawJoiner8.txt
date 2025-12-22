@@ -1,10 +1,13 @@
 import tech.tablesaw.api.Table;
+import tech.tablesaw.api.StringColumn;
+
 import java.util.*;
 
 public class TablesawJoiner {
 
     public static Table joinAll(Map<String, Table> tables) {
 
+        // 1️⃣ Find root table
         String rootKey = tables.entrySet().stream()
             .filter(e -> isRootTable(e.getValue()))
             .map(Map.Entry::getKey)
@@ -18,6 +21,7 @@ public class TablesawJoiner {
         joined.add(rootKey);
 
         boolean progress;
+
         do {
             progress = false;
 
@@ -26,29 +30,39 @@ public class TablesawJoiner {
                 if (joined.contains(childKey)) continue;
 
                 Table child = entry.getValue();
+
+                // must have parent_id to join
                 if (!child.columnNames().contains("parent_id")) continue;
 
-                // 🔥 IMPORTANT: remove duplicate lineage columns
-                Table childForJoin = child.copy();
+                // 2️⃣ Join FIRST (parent._row_id = child.parent_id)
+                Table joinedResult =
+                        result.joinOn("_row_id")
+                              .leftOuter(child, "parent_id");
 
-                childForJoin.removeColumns("_row_id");
-                childForJoin.removeColumns("parent_id");
+                // 3️⃣ Remove duplicate lineage columns AFTER join
+                if (joinedResult.columnNames().contains("parent_id")) {
+                    joinedResult.removeColumns("parent_id");
+                }
+                if (joinedResult.columnNames().contains("_row_id_1")) {
+                    joinedResult.removeColumns("_row_id_1");
+                }
 
-                // universal join rule
-                result = result.joinOn("_row_id")
-                               .leftOuter(childForJoin, "parent_id");
-
+                result = joinedResult;
                 joined.add(childKey);
                 progress = true;
             }
+
         } while (progress);
 
         return result;
     }
 
+    // ✅ Tablesaw-safe root detection
     private static boolean isRootTable(Table table) {
-        if (!table.columnNames().contains("parent_id")) return true;
-        return table.stringColumn("parent_id").countMissing()
-                == table.rowCount();
+        if (!table.columnNames().contains("parent_id")) {
+            return true;
+        }
+        StringColumn parentCol = table.stringColumn("parent_id");
+        return parentCol.countMissing() == parentCol.size();
     }
 }
