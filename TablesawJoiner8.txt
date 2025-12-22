@@ -17,6 +17,8 @@ public class TablesawJoiner {
             );
 
         Table result = tables.get(rootKey).copy();
+
+        // tables already joined into result
         Set<String> joined = new HashSet<>();
         joined.add(rootKey);
 
@@ -27,19 +29,24 @@ public class TablesawJoiner {
 
             for (Map.Entry<String, Table> entry : tables.entrySet()) {
                 String childKey = entry.getKey();
-                if (joined.contains(childKey)) continue;
-
                 Table child = entry.getValue();
 
-                // must have parent_id to join
+                // 🚫 already joined
+                if (joined.contains(childKey)) continue;
+
+                // 🚫 cannot join without parent_id
                 if (!child.columnNames().contains("parent_id")) continue;
 
-                // 2️⃣ Join FIRST (parent._row_id = child.parent_id)
+                // 🚫 parent_id must have at least one value
+                StringColumn parentCol = child.stringColumn("parent_id");
+                if (parentCol.countMissing() == parentCol.size()) continue;
+
+                // ✅ JOIN (parent._row_id = child.parent_id)
                 Table joinedResult =
                         result.joinOn("_row_id")
                               .leftOuter(child, "parent_id");
 
-                // 3️⃣ Remove duplicate lineage columns AFTER join
+                // 🧹 cleanup AFTER join
                 if (joinedResult.columnNames().contains("parent_id")) {
                     joinedResult.removeColumns("parent_id");
                 }
@@ -57,7 +64,7 @@ public class TablesawJoiner {
         return result;
     }
 
-    // ✅ Tablesaw-safe root detection
+    // ✅ Root = no parent_id OR all parent_id null
     private static boolean isRootTable(Table table) {
         if (!table.columnNames().contains("parent_id")) {
             return true;
