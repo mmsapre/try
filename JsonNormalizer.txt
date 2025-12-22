@@ -1,0 +1,54 @@
+import com.fasterxml.jackson.databind.*;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
+
+public class JsonNormalizer {
+
+    private static final AtomicLong ID = new AtomicLong(1);
+
+    private static void flatten(
+            JsonNode node,
+            String path,
+            Long parentId,
+            List<Map<String, Object>> out
+    ) {
+        if (node.isObject()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            long rowId = ID.getAndIncrement();
+
+            row.put("_row_id", rowId);
+            row.put("parent_id", parentId);
+            row.put("sourcePath", path.isEmpty() ? "root" : path);
+
+            node.fields().forEachRemaining(e -> {
+                if (e.getValue().isValueNode()) {
+                    row.put(e.getKey(), e.getValue().asText());
+                } else {
+                    flatten(e.getValue(),
+                            path.isEmpty() ? e.getKey() : path + "." + e.getKey(),
+                            rowId,
+                            out);
+                }
+            });
+
+            out.add(row);
+
+        } else if (node.isArray()) {
+            for (JsonNode child : node) {
+                flatten(child, path, parentId, out);
+            }
+        }
+    }
+
+    public static List<Map<String, Object>> normalize(String json) throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode root = mapper.readTree(json);
+
+        List<Map<String, Object>> rows = new ArrayList<>();
+
+        for (JsonNode element : root) {
+            flatten(element, "", null, rows);
+        }
+        return rows;
+    }
+}
