@@ -1,22 +1,27 @@
 import tech.tablesaw.api.Table;
+import tech.tablesaw.api.StringColumn;
+
 import java.util.*;
 
 public class TablesawJoiner {
 
     public static Table joinAll(Map<String, Table> tables) {
 
-        // find root (no parent_id column OR all parent_id null)
+        // 1️⃣ Find root table safely
         String rootKey = tables.entrySet().stream()
-            .filter(e -> !e.getValue().columnNames().contains("parent_id")
-                      || e.getValue().stringColumn("parent_id").isMissing().all())
+            .filter(e -> isRootTable(e.getValue()))
             .map(Map.Entry::getKey)
             .findFirst()
-            .orElseThrow();
+            .orElseThrow(() ->
+                new IllegalStateException("No root table found")
+            );
 
         Table result = tables.get(rootKey);
+
         Set<String> joined = new HashSet<>();
         joined.add(rootKey);
 
+        // 2️⃣ Iteratively join children
         boolean progress;
         do {
             progress = false;
@@ -38,5 +43,18 @@ public class TablesawJoiner {
         } while (progress);
 
         return result;
+    }
+
+    // ✅ Tablesaw-safe root detection
+    private static boolean isRootTable(Table table) {
+
+        if (!table.columnNames().contains("parent_id")) {
+            return true;
+        }
+
+        StringColumn parentCol = table.stringColumn("parent_id");
+
+        // ALL rows missing → root
+        return parentCol.countMissing() == parentCol.size();
     }
 }
