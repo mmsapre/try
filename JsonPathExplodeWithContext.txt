@@ -1,0 +1,64 @@
+import com.fasterxml.jackson.databind.*;
+import com.fasterxml.jackson.databind.node.*;
+import java.util.*;
+
+public class JsonPathExplodeWithContext {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    public static List<Map<String, Object>> explode(
+            String json,
+            String explodePath
+    ) throws Exception {
+
+        JsonNode root = MAPPER.readTree(json);
+        if (!root.isArray()) {
+            throw new IllegalArgumentException("Root JSON must be an array");
+        }
+
+        List<Map<String, Object>> rows = new ArrayList<>();
+
+        for (JsonNode element : root) {
+            if (!element.isObject()) continue;
+            ObjectNode obj = (ObjectNode) element;
+
+            JsonNode explodeArray = obj.get(explodePath);
+            if (explodeArray == null || !explodeArray.isArray()) continue;
+
+            // ---- common + other arrays ----
+            Map<String, Object> base = new LinkedHashMap<>();
+
+            obj.fields().forEachRemaining(e -> {
+                String key = e.getKey();
+                JsonNode val = e.getValue();
+
+                if (key.equals(explodePath)) return;
+
+                if (val.isArray()) {
+                    // other arrays copied as JSON column
+                    base.put(key, val.toString());
+                } else {
+                    // scalar / object copied as column
+                    base.put(
+                        key,
+                        val.isValueNode() ? val.asText() : val.toString()
+                    );
+                }
+            });
+
+            // ---- explode ONLY explodePath ----
+            for (JsonNode item : explodeArray) {
+                Map<String, Object> row = new LinkedHashMap<>(base);
+
+                // exploded path as single-element JSON array
+                ArrayNode single = MAPPER.createArrayNode();
+                single.add(item.deepCopy());
+
+                row.put(explodePath, single.toString());
+                rows.add(row);
+            }
+        }
+
+        return rows;
+    }
+}
