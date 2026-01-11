@@ -1,0 +1,64 @@
+import com.fasterxml.jackson.databind.JsonNode;
+import java.math.BigDecimal;
+import java.sql.*;
+
+public class JdbcBinder {
+
+    public void bind(PreparedStatement ps, int idx, Object value, String type) throws SQLException {
+        if (value == null) {
+            ps.setObject(idx, null);
+            return;
+        }
+
+        String t = type == null ? "STRING" : type.toUpperCase();
+
+        switch (t) {
+            case "STRING" -> ps.setString(idx, String.valueOf(value));
+            case "INT" -> ps.setInt(idx, toInt(value));
+            case "LONG" -> ps.setLong(idx, toLong(value));
+            case "BOOL" -> ps.setBoolean(idx, toBool(value));
+            case "DECIMAL" -> ps.setBigDecimal(idx, toDecimal(value));
+            case "TIMESTAMP" -> ps.setTimestamp(idx, toTimestamp(value));
+            case "DATE" -> ps.setDate(idx, toDate(value));
+            case "JSON" -> {
+                // store JSONB as text; with PG you may use PGobject if needed
+                if (value instanceof JsonNode jn) ps.setString(idx, jn.toString());
+                else ps.setString(idx, String.valueOf(value));
+            }
+            default -> ps.setObject(idx, value);
+        }
+    }
+
+    private int toInt(Object v) {
+        if (v instanceof Number n) return n.intValue();
+        return Integer.parseInt(String.valueOf(v));
+    }
+
+    private long toLong(Object v) {
+        if (v instanceof Number n) return n.longValue();
+        return Long.parseLong(String.valueOf(v));
+    }
+
+    private boolean toBool(Object v) {
+        if (v instanceof Boolean b) return b;
+        return Boolean.parseBoolean(String.valueOf(v));
+    }
+
+    private BigDecimal toDecimal(Object v) {
+        if (v instanceof BigDecimal bd) return bd;
+        if (v instanceof Number n) return BigDecimal.valueOf(n.doubleValue());
+        return new BigDecimal(String.valueOf(v));
+    }
+
+    private Timestamp toTimestamp(Object v) {
+        if (v instanceof Timestamp ts) return ts;
+        if (v instanceof java.time.LocalDateTime ldt) return Timestamp.valueOf(ldt);
+        return Timestamp.valueOf(String.valueOf(v)); // expects "yyyy-MM-dd HH:mm:ss[.fffffffff]"
+    }
+
+    private Date toDate(Object v) {
+        if (v instanceof Date d) return d;
+        if (v instanceof java.time.LocalDate ld) return Date.valueOf(ld);
+        return Date.valueOf(String.valueOf(v)); // expects "yyyy-MM-dd"
+    }
+}
