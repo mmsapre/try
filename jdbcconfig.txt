@@ -1,0 +1,61 @@
+tables:
+
+  trust:
+    tableName: trust_dim
+    scd2: true
+    businessKeys: [trust_id]
+    parent: null
+
+    columns:
+      trust_sk: { type: BIGINT, generated: true }
+      customer_id: { type: INTEGER }
+      trust_id: { type: VARCHAR }
+      trust_name: { type: VARCHAR }
+      status: { type: VARCHAR }
+      valid_from: { type: TIMESTAMP }
+      valid_to: { type: TIMESTAMP }
+      is_current: { type: BOOLEAN }
+
+  fund_manager:
+    tableName: fund_manager_dim
+    scd2: true
+    parent: trust
+
+    columns:
+      fund_manager_sk: { type: BIGINT, generated: true }
+      trust_sk: { type: BIGINT, fk: trust }
+      fund_manager_name: { type: VARCHAR }
+      city: { type: VARCHAR }
+      country: { type: VARCHAR }
+      valid_from: { type: TIMESTAMP }
+      valid_to: { type: TIMESTAMP }
+      is_current: { type: BOOLEAN }
+
+  client_contact:
+    tableName: client_contact_dim
+    scd2: true
+    parent: trust
+
+    columns:
+      contact_sk: { type: BIGINT, generated: true }
+      trust_sk: { type: BIGINT, fk: trust }
+      contact_name: { type: VARCHAR }
+      email: { type: VARCHAR }
+      valid_from: { type: TIMESTAMP }
+      valid_to: { type: TIMESTAMP }
+      is_current: { type: BOOLEAN }
+
+  statement_profile_address:
+    tableName: statement_profile_address
+    scd2: true
+    parent: trust
+
+    columns:
+      address_sk: { type: BIGINT, generated: true }
+      trust_sk: { type: BIGINT, fk: trust }
+      address_type: { type: VARCHAR }
+      swift: { type: VARCHAR }
+      fax: { type: VARCHAR }
+      valid_from: { type: TIMESTAMP }
+      valid_to: { type: TIMESTAMP }
+      is_current: { type: BOOLEAN }
