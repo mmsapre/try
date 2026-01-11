@@ -1,0 +1,39 @@
+import java.util.Map;
+
+public class TableMapping {
+
+    private String alias;
+    private Mode mode;
+    private boolean scd;
+    private String parentAlias;
+    private RepeatConfig repeat;
+    private Map<String, String> variables;
+
+    public enum Mode {
+        RAW, HYBRID, SPLIT
+    }
+
+    public String getAlias() {
+        return alias;
+    }
+
+    public Mode getMode() {
+        return mode;
+    }
+
+    public boolean isScd() {
+        return scd;
+    }
+
+    public String getParentAlias() {
+        return parentAlias;
+    }
+
+    public RepeatConfig getRepeat() {
+        return repeat;
+    }
+
+    public Map<String, String> getVariables() {
+        return variables;
+    }
+}
