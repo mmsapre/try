@@ -1,0 +1,74 @@
+import org.junit.jupiter.api.*;
+import static org.junit.jupiter.api.Assertions.*;
+import java.util.*;
+
+public class ScriptEvaluatorHybridTest {
+
+    private static final String PAYLOAD = """
+    {
+      "customerId": 2345,
+      "trust": [
+        {
+          "trustId": "T1",
+          "statementProfile": {
+            "mt535AddressList": [
+              { "attributeName": "STATEMENT", "swift": "STAT001" },
+              { "attributeName": "STATEMENT", "swift": "STAT002" }
+            ]
+          }
+        },
+        {
+          "trustId": "T2",
+          "statementProfile": {
+            "mt535AddressList": [
+              { "attributeName": "STATEMENT", "swift": "STAT003" }
+            ]
+          }
+        }
+      ]
+    }""";
+
+    @Test
+    void hybridExpandsAddressRows() throws Exception {
+
+        Mapping mapping = new Mapping();
+
+        TableMapping t = new TableMapping();
+        t.setAlias("statement_profile_address");
+        t.setMode("HYBRID");
+
+        TableMapping.RepeatConfig r = new TableMapping.RepeatConfig();
+        r.setRepeatOn("trust");
+        r.setBindItemAs("item");
+        r.setListPath("statementProfile.mt535AddressList");
+        r.setBindChildAs("child");
+        t.setRepeat(r);
+
+        t.setFields(List.of(
+                new FieldConfig("trust_id", "STRING", "parseItem('trustId')"),
+                new FieldConfig("address_type", "STRING", "parseChild('attributeName')"),
+                new FieldConfig("swift", "STRING", "parseChild('swift')")
+        ));
+
+        mapping.getTables().put(t.getAlias(), t);
+
+        ScriptEvaluator evaluator = new ScriptEvaluator();
+        ExecutionContext ctx = new ExecutionContext();
+        evaluator.evaluateAllTables(PAYLOAD, mapping, ctx);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String,Object>> rows =
+                (List<Map<String,Object>>) ctx.get("tableRows::statement_profile_address");
+
+        assertEquals(3, rows.size());
+
+        assertEquals("T1", rows.get(0).get("trust_id"));
+        assertEquals("STAT001", rows.get(0).get("swift"));
+
+        assertEquals("T1", rows.get(1).get("trust_id"));
+        assertEquals("STAT002", rows.get(1).get("swift"));
+
+        assertEquals("T2", rows.get(2).get("trust_id"));
+        assertEquals("STAT003", rows.get(2).get("swift"));
+    }
+}
