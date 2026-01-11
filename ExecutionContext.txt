@@ -1,0 +1,18 @@
+import java.util.*;
+
+public class ExecutionContext {
+    private final Map<String, Object> vars = new LinkedHashMap<>();
+
+    public void put(String k, Object v) { vars.put(k, v); }
+    public Object get(String k) { return vars.get(k); }
+
+    public String getString(String k) {
+        Object v = vars.get(k);
+        return v == null ? null : String.valueOf(v);
+    }
+
+    public Map<String,Object> asMap() { return vars; }
+
+    public Object getVar(String k) { return vars.get(k); }
+    public void putVar(String k, Object v) { vars.put(k, v); }
+}
