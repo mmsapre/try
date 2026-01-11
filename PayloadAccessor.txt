@@ -1,0 +1,6 @@
+public interface PayloadAccessor {
+    Object parseRoot(String path);     // scalar/object/array
+    Object parseItem(String path);     // within current item (repeatOn)
+    Object parseChild(String path);    // within current child (listPath)
+    String toJson(Object o);
+}
