@@ -1,0 +1,72 @@
+defaultMode: RAW
+
+variables:
+  service_id: "'trust-service'"
+  message_type: "'CUSTOMER_TRUST'"
+
+tables:
+  statement_profile_address:
+    alias: statement_profile_address
+    table: statement_profile_address
+    mode: HYBRID
+    repeat:
+      repeatOn: trust
+      bindItemAs: item
+      listPath: statementProfile.mt535AddressList
+      bindChildAs: child
+
+    # ScriptEvaluator produces row maps with these columns
+    fields:
+      - { name: statement_profile_sk, type: LONG, expr: "parseItem('statementProfile.id')" }   # or from lookup/DB later
+      - { name: address_type,         type: STRING, expr: "parseChild('attributeName')" }
+      - { name: swift,                type: STRING, expr: "parseChild('swift')" }
+
+      # SCD columns computed in evaluator (typed values!)
+      - { name: valid_from,           type: TIMESTAMP, expr: "nowTs()" }
+      - { name: valid_to,             type: TIMESTAMP, expr: "farFutureTs()" }
+      - { name: is_current,           type: BOOL,      expr: "true" }
+      - { name: version,              type: INT,       expr: "coalesceInt(ctx.get('current_version')) + 1" }
+
+    scd2:
+      enabled: true
+      businessKeyColumns: [statement_profile_sk, address_type, swift]
+      deltaMode: HASH
+      deltaColumns: [address_type, swift]  # plus other columns if exist
+
+    jdbc:
+      selectCurrentSql: >
+        select address_sk, version, delta_hash
+        from statement_profile_address
+        where statement_profile_sk = ?
+          and address_type = ?
+          and swift = ?
+          and is_current = true
+
+      selectFields:
+        - { name: statement_profile_sk, type: LONG, expr: "$statement_profile_sk" }
+        - { name: address_type,         type: STRING, expr: "$address_type" }
+        - { name: swift,                type: STRING, expr: "$swift" }
+
+      closeCurrentSql: >
+        update statement_profile_address
+           set valid_to = ?, is_current = false
+         where address_sk = ?
+
+      closeFields:
+        - { name: valid_to, type: TIMESTAMP, expr: "nowTs()" }  # could also be "$valid_to_close" if precomputed
+        - { name: address_sk, type: LONG, expr: "$current_sk" } # if you store current_sk into row (or ctx)
+
+      insertSql: >
+        insert into statement_profile_address
+          (statement_profile_sk, address_type, swift, valid_from, valid_to, is_current, version, delta_hash)
+        values (?, ?, ?, ?, ?, ?, ?, ?)
+
+      insertFields:
+        - { name: statement_profile_sk, type: LONG, expr: "$statement_profile_sk" }
+        - { name: address_type,         type: STRING, expr: "$address_type" }
+        - { name: swift,                type: STRING, expr: "$swift" }
+        - { name: valid_from,           type: TIMESTAMP, expr: "$valid_from" }
+        - { name: valid_to,             type: TIMESTAMP, expr: "$valid_to" }
+        - { name: is_current,           type: BOOL, expr: "$is_current" }
+        - { name: version,              type: INT, expr: "$version" }
+        - { name: delta_hash,           type: STRING, expr: "$_delta_hash" }
