@@ -1,0 +1,49 @@
+import java.util.*;
+
+public class JdbcConfig {
+
+    // Mode: APPEND / REPLACE (non-scd)
+    private String writeMode = "APPEND";
+
+    // Insert
+    private String insertSql;
+    private List<FieldConfig> insertFields = new ArrayList<>();
+
+    // For REPLACE mode (optional)
+    private String deleteSql;
+    private List<FieldConfig> deleteFields = new ArrayList<>();
+
+    // SCD2 statements (optional; if absent will be auto-generated if you want)
+    private String selectCurrentSql;   // returns current version + optional hash
+    private List<FieldConfig> selectFields = new ArrayList<>();
+
+    private String closeCurrentSql;    // update valid_to/is_current
+    private List<FieldConfig> closeFields = new ArrayList<>();
+
+    public String getWriteMode() { return writeMode; }
+    public void setWriteMode(String writeMode) { this.writeMode = writeMode; }
+
+    public String getInsertSql() { return insertSql; }
+    public void setInsertSql(String insertSql) { this.insertSql = insertSql; }
+
+    public List<FieldConfig> getInsertFields() { return insertFields; }
+    public void setInsertFields(List<FieldConfig> insertFields) { this.insertFields = insertFields; }
+
+    public String getDeleteSql() { return deleteSql; }
+    public void setDeleteSql(String deleteSql) { this.deleteSql = deleteSql; }
+
+    public List<FieldConfig> getDeleteFields() { return deleteFields; }
+    public void setDeleteFields(List<FieldConfig> deleteFields) { this.deleteFields = deleteFields; }
+
+    public String getSelectCurrentSql() { return selectCurrentSql; }
+    public void setSelectCurrentSql(String selectCurrentSql) { this.selectCurrentSql = selectCurrentSql; }
+
+    public List<FieldConfig> getSelectFields() { return selectFields; }
+    public void setSelectFields(List<FieldConfig> selectFields) { this.selectFields = selectFields; }
+
+    public String getCloseCurrentSql() { return closeCurrentSql; }
+    public void setCloseCurrentSql(String closeCurrentSql) { this.closeCurrentSql = closeCurrentSql; }
+
+    public List<FieldConfig> getCloseFields() { return closeFields; }
+    public void setCloseFields(List<FieldConfig> closeFields) { this.closeFields = closeFields; }
+}
