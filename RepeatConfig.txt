@@ -1,0 +1,33 @@
+public class RepeatConfig {
+
+    // root repeat
+    private String repeatOn;       // e.g. trust
+    private String bindItemAs;     // item
+
+    // hybrid child object
+    private String objectPath;     // fundManager
+
+    // split list
+    private String listPath;       // clientData.clientContacts
+    private String bindChildAs;    // child
+
+    public String getRepeatOn() {
+        return repeatOn;
+    }
+
+    public String getBindItemAs() {
+        return bindItemAs;
+    }
+
+    public String getObjectPath() {
+        return objectPath;
+    }
+
+    public String getListPath() {
+        return listPath;
+    }
+
+    public String getBindChildAs() {
+        return bindChildAs;
+    }
+}
