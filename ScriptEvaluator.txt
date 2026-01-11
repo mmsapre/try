@@ -1,0 +1,246 @@
+import com.fasterxml.jackson.databind.*;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+
+import javax.script.*;
+import java.sql.Timestamp;
+import java.time.*;
+import java.util.*;
+import java.util.function.Function;
+
+public class ScriptEvaluator {
+
+    private final ScriptEngine engine;
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    public ScriptEvaluator() {
+        this.engine = new ScriptEngineManager().getEngineByName("nashorn");
+        if (this.engine == null) {
+            throw new IllegalStateException("No script engine 'nashorn' found. Add nashorn-core dependency.");
+        }
+    }
+
+    public void initPayload(String rawPayload, ExecutionContext ctx) throws Exception {
+        JsonNode root = mapper.readTree(rawPayload);
+        ctx.put("raw_payload", rawPayload);
+        ctx.put("rootNode", root);
+    }
+
+    /**
+     * Evaluate Mapping.global variables + per-table rowsets.
+     * Result:
+     *  - ctx contains "tableRows::<alias>" => List<Map<String,Object>>
+     */
+    public void evaluateAllTables(String rawPayload, Mapping mapping, ExecutionContext ctx) throws Exception {
+        initPayload(rawPayload, ctx);
+
+        // global vars
+        evaluateExpressionsIntoContext(mapping.getVariables(), ctx, null, null);
+
+        JsonNode root = (JsonNode) ctx.get("rootNode");
+        JsonPayloadAccessor acc = new JsonPayloadAccessor(mapper, root);
+
+        for (TableMapping tm : mapping.orderedTables()) {
+            if (!tm.isEnabled()) continue;
+
+            String mode = tm.getMode() != null ? tm.getMode() : mapping.getDefaultMode();
+            List<Map<String,Object>> rows = switch (mode.toUpperCase(Locale.ROOT)) {
+                case "RAW"    -> evalRawTable(tm, ctx, acc);
+                case "SPLIT"  -> evalSplitTable(tm, ctx, acc);
+                case "HYBRID" -> evalHybridTable(tm, ctx, acc);
+                default -> throw new IllegalArgumentException("Unsupported mode: " + mode);
+            };
+
+            ctx.put("tableRows::" + tm.getAlias(), rows);
+        }
+    }
+
+    // ---------- RAW: 1 row per item (or 1 row total if no repeatOn) ----------
+    private List<Map<String,Object>> evalRawTable(TableMapping tm, ExecutionContext ctx, JsonPayloadAccessor acc) {
+        TableMapping.RepeatConfig r = tm.getRepeat();
+        List<JsonNode> items = iterateRootList((JsonNode) ctx.get("rootNode"), r != null ? r.getRepeatOn() : null);
+
+        List<Map<String,Object>> out = new ArrayList<>();
+        if (items.isEmpty()) {
+            out.add(evalRow(tm.getFields(), ctx, acc, null, null));
+            return out;
+        }
+
+        for (int i = 0; i < items.size(); i++) {
+            JsonNode item = items.get(i);
+            acc.setItem(item);
+            ctx.put(r.getBindItemAs(), item);
+            ctx.put("item_index", i);
+
+            out.add(evalRow(tm.getFields(), ctx, acc, item, null));
+        }
+        return out;
+    }
+
+    // ---------- SPLIT: listPath expands into child rows (child fields only) ----------
+    private List<Map<String,Object>> evalSplitTable(TableMapping tm, ExecutionContext ctx, JsonPayloadAccessor acc) {
+        TableMapping.RepeatConfig r = requiredRepeat(tm);
+
+        List<JsonNode> items = iterateRootList((JsonNode) ctx.get("rootNode"), r.getRepeatOn());
+        List<Map<String,Object>> out = new ArrayList<>();
+
+        for (int i = 0; i < items.size(); i++) {
+            JsonNode item = items.get(i);
+            acc.setItem(item);
+            ctx.put(r.getBindItemAs(), item);
+            ctx.put("item_index", i);
+
+            List<JsonNode> children = iterateItemList(item, r.getListPath());
+            if (children.isEmpty()) {
+                // In SPLIT, if no children => no row (common)
+                continue;
+            }
+
+            for (int c = 0; c < children.size(); c++) {
+                JsonNode child = children.get(c);
+                acc.setChild(child);
+                ctx.put(r.getBindChildAs(), child);
+                ctx.put("child_index", c);
+
+                out.add(evalRow(tm.getFields(), ctx, acc, item, child));
+            }
+        }
+        return out;
+    }
+
+    // ---------- HYBRID: parent context + child rows ----------
+    private List<Map<String,Object>> evalHybridTable(TableMapping tm, ExecutionContext ctx, JsonPayloadAccessor acc) {
+        TableMapping.RepeatConfig r = requiredRepeat(tm);
+
+        List<JsonNode> items = iterateRootList((JsonNode) ctx.get("rootNode"), r.getRepeatOn());
+        List<Map<String,Object>> out = new ArrayList<>();
+
+        for (int i = 0; i < items.size(); i++) {
+            JsonNode item = items.get(i);
+            acc.setItem(item);
+            ctx.put(r.getBindItemAs(), item);
+            ctx.put("item_index", i);
+
+            List<JsonNode> children = iterateItemList(item, r.getListPath());
+            if (children.isEmpty()) {
+                // HYBRID: optional behavior: emit a parent-only row? Usually NO for child tables.
+                continue;
+            }
+
+            for (int c = 0; c < children.size(); c++) {
+                JsonNode child = children.get(c);
+                acc.setChild(child);
+                ctx.put(r.getBindChildAs(), child);
+                ctx.put("child_index", c);
+
+                out.add(evalRow(tm.getFields(), ctx, acc, item, child));
+            }
+        }
+        return out;
+    }
+
+    private Map<String,Object> evalRow(List<FieldConfig> fields, ExecutionContext ctx, JsonPayloadAccessor acc, JsonNode item, JsonNode child) {
+        Bindings b = createBindings(ctx, acc);
+
+        Map<String,Object> row = new LinkedHashMap<>();
+        for (FieldConfig f : fields) {
+            Object v = evalExpr(f.getExpr(), b);
+            row.put(f.getName(), normalizeValue(v));
+        }
+        return row;
+    }
+
+    private void evaluateExpressionsIntoContext(Map<String,String> exprs, ExecutionContext ctx, JsonPayloadAccessor acc, Bindings reuse) {
+        if (exprs == null) return;
+        Bindings b = reuse != null ? reuse : createBindings(ctx, acc);
+        for (Map.Entry<String,String> e : exprs.entrySet()) {
+            Object v = evalExpr(e.getValue(), b);
+            ctx.put(e.getKey(), normalizeValue(v));
+        }
+    }
+
+    private Bindings createBindings(ExecutionContext ctx, JsonPayloadAccessor acc) {
+        Bindings b = engine.createBindings();
+
+        // Provide ctx map access
+        b.put("ctx", ctx.asMap());
+
+        // Provide accessor functions (paths only)
+        if (acc != null) {
+            b.put("parseRoot", (Function<String, Object>) acc::parseRoot);
+            b.put("parseItem", (Function<String, Object>) acc::parseItem);
+            b.put("parseChild", (Function<String, Object>) acc::parseChild);
+            b.put("toJson", (Function<Object, String>) acc::toJson);
+        } else {
+            b.put("parseRoot", (Function<String, Object>) p -> null);
+            b.put("parseItem", (Function<String, Object>) p -> null);
+            b.put("parseChild", (Function<String, Object>) p -> null);
+            b.put("toJson", (Function<Object, String>) o -> null);
+        }
+
+        // Typed time helpers -> return java.sql types for JDBC (NOT String)
+        b.put("nowTs", (java.util.function.Supplier<Timestamp>) () -> Timestamp.valueOf(LocalDateTime.now()));
+        b.put("farFutureTs", (java.util.function.Supplier<Timestamp>) () -> Timestamp.valueOf(LocalDateTime.of(2099, 12, 31, 0, 0)));
+        b.put("todayDate", (java.util.function.Supplier<java.sql.Date>) () -> java.sql.Date.valueOf(LocalDate.now()));
+
+        // UUID helper (returns String)
+        b.put("uuid", (java.util.function.Supplier<String>) () -> UUID.randomUUID().toString());
+
+        // null-safe coalesce
+        b.put("coalesceInt", (java.util.function.Function<Object,Integer>) o -> {
+            if (o == null) return 0;
+            if (o instanceof Number n) return n.intValue();
+            return Integer.parseInt(String.valueOf(o));
+        });
+
+        // boolean literals can be used directly in JS, but we keep helpers too
+        b.put("TRUE", Boolean.TRUE);
+        b.put("FALSE", Boolean.FALSE);
+
+        return b;
+    }
+
+    private Object evalExpr(String expr, Bindings b) {
+        if (expr == null) return null;
+        try {
+            return engine.eval(expr, b);
+        } catch (ScriptException e) {
+            throw new RuntimeException("Eval failed: " + expr, e);
+        }
+    }
+
+    private Object normalizeValue(Object v) {
+        // Nashorn may return ScriptObjectMirror for objects/arrays. We want:
+        // - scalars as-is
+        // - JsonNode remains JsonNode
+        // - Map/List stays Map/List when possible
+        if (v == null) return null;
+        return v;
+    }
+
+    private TableMapping.RepeatConfig requiredRepeat(TableMapping tm) {
+        if (tm.getRepeat() == null || tm.getRepeat().getRepeatOn() == null) {
+            throw new IllegalArgumentException("Table " + tm.getAlias() + " requires repeat.repeatOn for SPLIT/HYBRID");
+        }
+        return tm.getRepeat();
+    }
+
+    private List<JsonNode> iterateRootList(JsonNode root, String repeatOnDotPath) {
+        if (repeatOnDotPath == null || repeatOnDotPath.isBlank()) return List.of();
+        JsonNode arr = root.at("/" + repeatOnDotPath.replace(".", "/"));
+        if (arr == null || !arr.isArray()) return List.of();
+
+        List<JsonNode> out = new ArrayList<>();
+        for (JsonNode n : (ArrayNode) arr) out.add(n);
+        return out;
+    }
+
+    private List<JsonNode> iterateItemList(JsonNode item, String listPathDot) {
+        if (listPathDot == null || listPathDot.isBlank()) return List.of();
+        JsonNode arr = item.at("/" + listPathDot.replace(".", "/"));
+        if (arr == null || !arr.isArray()) return List.of();
+
+        List<JsonNode> out = new ArrayList<>();
+        for (JsonNode n : (ArrayNode) arr) out.add(n);
+        return out;
+    }
+}
