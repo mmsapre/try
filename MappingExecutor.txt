@@ -1,0 +1,65 @@
+public class MappingExecutor {
+
+    private final ScriptEvaluator evaluator;
+
+    public MappingExecutor(ScriptEvaluator evaluator) {
+        this.evaluator = evaluator;
+    }
+
+    public void execute(Mapping mapping, ExecutionContext ctx) {
+
+        for (TableMapping tm : mapping.getTables()) {
+
+            List<Map<String,Object>> rows = new ArrayList<>();
+
+            if (tm.isRaw()) {
+                Map<String,Object> row = evalVariables(tm, ctx, Map.of(
+                        "item", ctx.getGlobal("root")
+                ));
+                rows.add(row);
+            }
+
+            if (tm.isSplit() || tm.isHybrid()) {
+
+                List<JsonNode> parents =
+                        JsonUtil.listAt((JsonNode) ctx.getGlobal("root"),
+                                        tm.getRepeat().getRepeatOn());
+
+                for (JsonNode parent : parents) {
+
+                    List<JsonNode> children =
+                            JsonUtil.listAt(parent, tm.getRepeat().getListPath());
+
+                    for (JsonNode child : children) {
+
+                        Map<String,Object> locals = new HashMap<>();
+                        locals.put("item", parent);
+                        locals.put("child", child);
+
+                        Map<String,Object> row =
+                                evalVariables(tm, ctx, locals);
+
+                        rows.add(row);
+                    }
+                }
+            }
+
+            ctx.addRows(tm.getAlias(), rows);
+        }
+    }
+
+    private Map<String,Object> evalVariables(
+            TableMapping tm,
+            ExecutionContext ctx,
+            Map<String,Object> locals
+    ) {
+        Map<String,Object> row = new LinkedHashMap<>();
+
+        tm.getVariables().forEach((leftKey, expr) -> {
+            Object val = evaluator.eval(expr, ctx, locals);
+            row.put(leftKey, val);
+        });
+
+        return row;
+    }
+}
