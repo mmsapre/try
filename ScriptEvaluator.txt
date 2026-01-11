@@ -19,11 +19,24 @@ public class ScriptEvaluator {
         }
     }
 
-    public void initPayload(String rawPayload, ExecutionContext ctx) throws Exception {
-        JsonNode root = mapper.readTree(rawPayload);
-        ctx.put("raw_payload", rawPayload);
-        ctx.put("rootNode", root);
+   
+
+public void initPayload(String rawJson, ExecutionContext ctx) throws Exception {
+
+    JsonNode rootNode = mapper.readTree(rawJson);
+
+    List<JsonNode> roots;
+
+    if (rootNode.isArray()) {
+        roots = new ArrayList<>();
+        rootNode.forEach(roots::add);
+    } else {
+        roots = List.of(rootNode);
     }
+
+    ctx.putGlobal("raw_payload", rawJson);
+    ctx.putGlobal("roots", roots);   // 🔑 always a LIST
+}
 
     /**
      * Evaluate Mapping.global variables + per-table rowsets.
