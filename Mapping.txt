@@ -1,0 +1,22 @@
+import java.util.*;
+
+public class Mapping {
+    private String defaultMode = "RAW"; // RAW / SPLIT / HYBRID
+    private Map<String, TableMapping> tables = new LinkedHashMap<>();
+
+    // Global variables computed once per payload (optional)
+    private Map<String, String> variables = new LinkedHashMap<>();
+
+    public String getDefaultMode() { return defaultMode; }
+    public void setDefaultMode(String defaultMode) { this.defaultMode = defaultMode; }
+
+    public Map<String, TableMapping> getTables() { return tables; }
+    public void setTables(Map<String, TableMapping> tables) { this.tables = tables; }
+
+    public Map<String, String> getVariables() { return variables; }
+    public void setVariables(Map<String, String> variables) { this.variables = variables; }
+
+    public List<TableMapping> orderedTables() {
+        return new ArrayList<>(tables.values()); // already LinkedHashMap => order preserved
+    }
+}
