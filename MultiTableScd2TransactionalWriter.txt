@@ -1,0 +1,231 @@
+import java.sql.*;
+import java.util.*;
+import javax.sql.DataSource;
+
+public class MultiTableScd2TransactionalWriter {
+
+    private final DataSource ds;
+    private final Mapping mapping;
+    private final ScriptEvaluator evaluator;
+    private final JdbcBinder binder = new JdbcBinder();
+
+    public MultiTableScd2TransactionalWriter(DataSource ds, Mapping mapping, ScriptEvaluator evaluator) {
+        this.ds = ds;
+        this.mapping = mapping;
+        this.evaluator = evaluator;
+    }
+
+    /**
+     * Entry point: raw payload -> ctx variables -> apply tables.
+     */
+    public void execute(String rawPayload) throws Exception {
+        ExecutionContext ctx = new ExecutionContext();
+        evaluator.evaluateAllTables(rawPayload, mapping, ctx);
+
+        try (Connection conn = ds.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                for (TableMapping tm : mapping.orderedTables()) {
+                    if (!tm.isEnabled()) continue;
+
+                    @SuppressWarnings("unchecked")
+                    List<Map<String,Object>> rows =
+                            (List<Map<String,Object>>) ctx.get("tableRows::" + tm.getAlias());
+
+                    if (rows == null || rows.isEmpty()) continue;
+
+                    if (tm.isScd2Enabled()) {
+                        applyScd2(conn, tm, rows, ctx);
+                    } else {
+                        applyNonScd(conn, tm, rows, ctx);
+                    }
+                }
+                conn.commit();
+            } catch (Exception e) {
+                conn.rollback();
+                throw e;
+            }
+        }
+    }
+
+    // -------------------- NON-SCD: APPEND / REPLACE --------------------
+    private void applyNonScd(Connection conn, TableMapping tm, List<Map<String,Object>> rows, ExecutionContext ctx) throws Exception {
+        JdbcConfig jdbc = tm.getJdbc();
+
+        if ("REPLACE".equalsIgnoreCase(jdbc.getWriteMode())) {
+            if (jdbc.getDeleteSql() == null) {
+                throw new IllegalArgumentException("REPLACE needs deleteSql for table " + tm.getAlias());
+            }
+            try (PreparedStatement del = conn.prepareStatement(jdbc.getDeleteSql())) {
+                bindFromRowOrCtx(del, jdbc.getDeleteFields(), ctx, rows.get(0)); // delete typically uses parent keys
+                del.executeUpdate();
+            }
+        }
+
+        // batch insert
+        batchInsert(conn, jdbc.getInsertSql(), jdbc.getInsertFields(), rows, ctx);
+    }
+
+    // -------------------- SCD2 --------------------
+    private void applyScd2(Connection conn, TableMapping tm, List<Map<String,Object>> rows, ExecutionContext ctx) throws Exception {
+        TableMapping.Scd2Config scd = tm.getScd2();
+        JdbcConfig jdbc = tm.getJdbc();
+
+        // Expect jdbc.selectCurrentSql / closeCurrentSql / insertSql configured in yaml
+        if (jdbc.getSelectCurrentSql() == null || jdbc.getCloseCurrentSql() == null || jdbc.getInsertSql() == null) {
+            throw new IllegalArgumentException("SCD2 requires selectCurrentSql + closeCurrentSql + insertSql for " + tm.getAlias());
+        }
+
+        // For each row do select/close/insert (SCD must be per-row, but we can batch inserts AFTER closes)
+        List<Map<String,Object>> inserts = new ArrayList<>(rows.size());
+
+        for (Map<String,Object> row : rows) {
+            // 1) SELECT current
+            CurrentRow current = selectCurrent(conn, jdbc, ctx, row);
+
+            // Optional delta check
+            boolean shouldInsert = true;
+            if ("HASH".equalsIgnoreCase(scd.getDeltaMode())) {
+                String newHash = computeRowHash(row, scd, tm);
+                if (current != null && current.hash != null && current.hash.equals(newHash)) {
+                    shouldInsert = false; // no change
+                }
+                row.put("_delta_hash", newHash);
+            }
+
+            if (!shouldInsert) {
+                continue;
+            }
+
+            // 2) CLOSE current (if exists)
+            if (current != null) {
+                ctx.put("current_version", current.version);
+                ctx.put("current_sk", current.sk);
+                ctx.put("current_hash", current.hash);
+
+                try (PreparedStatement close = conn.prepareStatement(jdbc.getCloseCurrentSql())) {
+                    // close binds from ctx+row; ensure closeFields includes keys + current_sk or keys
+                    bindFromRowOrCtx(close, jdbc.getCloseFields(), ctx, row);
+                    close.executeUpdate();
+                }
+            } else {
+                ctx.put("current_version", null);
+                ctx.put("current_sk", null);
+                ctx.put("current_hash", null);
+            }
+
+            // 3) INSERT new (set scd columns)
+            // If your insertFields include scd derived expressions (nowTs/farFuture/nextVersion), evaluator must provide them as values.
+            // Here we allow computed fields already in row (if ScriptEvaluator made them) OR computed via ctx helpers.
+            // easiest: include them in FieldConfig expr in YAML.
+            inserts.add(row);
+        }
+
+        // 4) Batch insert new rows
+        if (!inserts.isEmpty()) {
+            batchInsert(conn, jdbc.getInsertSql(), jdbc.getInsertFields(), inserts, ctx);
+        }
+    }
+
+    private CurrentRow selectCurrent(Connection conn, JdbcConfig jdbc, ExecutionContext ctx, Map<String,Object> row) throws Exception {
+        try (PreparedStatement ps = conn.prepareStatement(jdbc.getSelectCurrentSql())) {
+            bindFromRowOrCtx(ps, jdbc.getSelectFields(), ctx, row);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return null;
+
+                // expected columns: sk, version, hash (hash optional)
+                Long sk = rs.getObject(1) == null ? null : rs.getLong(1);
+                Integer version = rs.getObject(2) == null ? null : rs.getInt(2);
+                String hash = null;
+                if (rs.getMetaData().getColumnCount() >= 3) {
+                    hash = rs.getString(3);
+                }
+                return new CurrentRow(sk, version, hash);
+            }
+        }
+    }
+
+    private void batchInsert(Connection conn, String sql, List<FieldConfig> fields, List<Map<String,Object>> rows, ExecutionContext ctx) throws Exception {
+        if (sql == null) throw new IllegalArgumentException("insertSql is null");
+        if (fields == null || fields.isEmpty()) throw new IllegalArgumentException("insertFields empty");
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            int batchSize = 0;
+
+            for (Map<String,Object> row : rows) {
+                int i = 1;
+                for (FieldConfig f : fields) {
+                    Object val = resolveValue(f, ctx, row);
+                    binder.bind(ps, i++, val, f.getType());
+                }
+                ps.addBatch();
+                batchSize++;
+
+                if (batchSize >= 500) {
+                    ps.executeBatch();
+                    batchSize = 0;
+                }
+            }
+            if (batchSize > 0) ps.executeBatch();
+        }
+    }
+
+    /**
+     * Resolve a field value:
+     * - if expr is "$col" => from row
+     * - if expr is "ctx.xxx" or function => evaluate via ScriptEvaluator engine (optional)
+     *
+     * Practical approach: keep insertFields expr as "$columnName" and compute row columns earlier in ScriptEvaluator.
+     */
+    private Object resolveValue(FieldConfig f, ExecutionContext ctx, Map<String,Object> row) {
+        String expr = f.getExpr();
+        if (expr == null) return null;
+
+        // "$col" means take from computed row
+        if (expr.startsWith("$")) {
+            return row.get(expr.substring(1));
+        }
+
+        // else treat as constant literal? simplest:
+        // you can still allow ScriptEvaluator-style expressions at writer time if you want,
+        // but then you'd need to pass bindings. For performance, precompute in ScriptEvaluator.
+        if ("true".equalsIgnoreCase(expr)) return Boolean.TRUE;
+        if ("false".equalsIgnoreCase(expr)) return Boolean.FALSE;
+        return expr; // fallback constant string
+    }
+
+    private void bindFromRowOrCtx(PreparedStatement ps, List<FieldConfig> fields, ExecutionContext ctx, Map<String,Object> row) throws Exception {
+        int i = 1;
+        for (FieldConfig f : fields) {
+            Object v = resolveValue(f, ctx, row);
+            binder.bind(ps, i++, v, f.getType());
+        }
+    }
+
+    // Simple hash function for delta detection (replace with stable hash)
+    private String computeRowHash(Map<String,Object> row, TableMapping.Scd2Config scd, TableMapping tm) {
+        List<String> cols = scd.getDeltaColumns();
+        if (cols == null || cols.isEmpty()) {
+            // use all columns except internal
+            cols = new ArrayList<>(row.keySet());
+            cols.removeIf(k -> k.startsWith("_"));
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String c : cols) {
+            sb.append(c).append('=').append(Objects.toString(row.get(c), "")).append('|');
+        }
+        return Integer.toHexString(sb.toString().hashCode());
+    }
+
+    private static class CurrentRow {
+        final Long sk;
+        final Integer version;
+        final String hash;
+        CurrentRow(Long sk, Integer version, String hash) {
+            this.sk = sk;
+            this.version = version;
+            this.hash = hash;
+        }
+    }
+}
