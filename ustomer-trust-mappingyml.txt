@@ -1,0 +1,187 @@
+tables:
+
+  # =========================
+  # TRUST (ROOT – SCD2)
+  # =========================
+  - alias: trust
+    mode: HYBRID
+    scd: true
+
+    repeat:
+      repeatOn: trust
+      bindItemAs: item
+
+    variables:
+      customer_id: "parseRoot('customerId')"
+      trust_id:    "parseItem('trustId')"
+      trust_name:  "parseItem('trustName')"
+      status:      "parseItem('status')"
+      valid_from:  "LocalDateTime.now()"
+      valid_to:    "null"
+      is_current:  "true"
+
+  # =========================
+  # FUND MANAGER (CHILD – SCD2)
+  # =========================
+  - alias: fund_manager
+    mode: HYBRID
+    scd: true
+    parentAlias: trust
+
+    repeat:
+      repeatOn: trust
+      bindItemAs: item
+      objectPath: fundManager
+
+    variables:
+      fund_manager_name: "parseChild('fundManagerName')"
+      city:              "parseChild('fundManagerCity')"
+      country:           "parseChild('fundManagerCountry')"
+      valid_from:        "LocalDateTime.now()"
+      valid_to:          "null"
+      is_current:        "true"
+
+  # =========================
+  # CLIENT DATA (CHILD – SCD2)
+  # =========================
+  - alias: client_data
+    mode: HYBRID
+    scd: true
+    parentAlias: trust
+
+    repeat:
+      repeatOn: trust
+      bindItemAs: item
+      objectPath: clientData
+
+    variables:
+      client_ca_class: "parseChild('clientCaClass')"
+      client_tier:     "parseChild('clientTier')"
+      valid_from:      "LocalDateTime.now()"
+      valid_to:        "null"
+      is_current:      "true"
+
+  # =========================
+  # CLIENT CONTACT (GRANDCHILD – SCD2)
+  # =========================
+  - alias: client_contact
+    mode: SPLIT
+    scd: true
+    parentAlias: client_data
+
+    repeat:
+      repeatOn: trust
+      bindItemAs: item
+      listPath: clientData.clientContacts
+      bindChildAs: child
+
+    variables:
+      contact_name: "parseChild('contactPersonName')"
+      email:        "parseChild('emailAddress')"
+      valid_from:   "LocalDateTime.now()"
+      valid_to:     "null"
+      is_current:   "true"
+
+  # =========================
+  # DISCLOSURE (CHILD – SCD2)
+  # =========================
+  - alias: disclosure
+    mode: HYBRID
+    scd: true
+    parentAlias: trust
+
+    repeat:
+      repeatOn: trust
+      bindItemAs: item
+      objectPath: disclosure
+
+    variables:
+      class_action_mode: "parseChild('classActionMode')"
+      issuer:            "parseChild('issuer')"
+      valid_from:        "LocalDateTime.now()"
+      valid_to:          "null"
+      is_current:        "true"
+
+  # =========================
+  # REGULATORY (CHILD – SCD2)
+  # =========================
+  - alias: regulatory
+    mode: HYBRID
+    scd: true
+    parentAlias: trust
+
+    repeat:
+      repeatOn: trust
+      bindItemAs: item
+      objectPath: regulatory
+
+    variables:
+      special_category: "parseChild('specialCategoryOfClient')"
+      sanction_reason:  "parseChild('sanctionReason')"
+      valid_from:       "LocalDateTime.now()"
+      valid_to:         "null"
+      is_current:       "true"
+
+  # =========================
+  # TAX AND FEE (CHILD – SCD2)
+  # =========================
+  - alias: tax_and_fee
+    mode: HYBRID
+    scd: true
+    parentAlias: trust
+
+    repeat:
+      repeatOn: trust
+      bindItemAs: item
+      objectPath: taxAndFee
+
+    variables:
+      fatca_category: "parseChild('fatcaCategory')"
+      tax_id_number:  "parseChild('localTaxIdNumber')"
+      valid_from:     "LocalDateTime.now()"
+      valid_to:       "null"
+      is_current:     "true"
+
+  # =========================
+  # ADVISE PROFILE ADDRESS (SCD2 SPLIT)
+  # =========================
+  - alias: advise_profile_address
+    mode: SPLIT
+    scd: true
+    parentAlias: trust
+
+    repeat:
+      repeatOn: trust
+      bindItemAs: item
+      listPath: adviseProfile.swiftSrdAddressList
+      bindChildAs: child
+
+    variables:
+      address_type: "'SWIFT'"
+      swift:        "parseChild('swift')"
+      fax:          "parseChild('fax')"
+      valid_from:   "LocalDateTime.now()"
+      valid_to:     "null"
+      is_current:   "true"
+
+  # =========================
+  # STATEMENT PROFILE ADDRESS (SCD2 SPLIT)
+  # =========================
+  - alias: statement_profile_address
+    mode: SPLIT
+    scd: true
+    parentAlias: trust
+
+    repeat:
+      repeatOn: trust
+      bindItemAs: item
+      listPath: statementProfile.mt535AddressList
+      bindChildAs: child
+
+    variables:
+      address_type: "'MT535'"
+      swift:        "parseChild('swift')"
+      fax:          "parseChild('fax')"
+      valid_from:   "LocalDateTime.now()"
+      valid_to:     "null"
+      is_current:   "true"
