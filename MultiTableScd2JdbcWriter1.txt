@@ -1,0 +1,102 @@
+public class MultiTableScd2JdbcWriter {
+
+    private final DataSource ds;
+    private final JdbcConfig jdbc;
+
+    public MultiTableScd2JdbcWriter(DataSource ds, JdbcConfig jdbc) {
+        this.ds = ds;
+        this.jdbc = jdbc;
+    }
+
+    public void write(Map<String, List<Map<String, Object>>> data) throws Exception {
+
+        try (Connection c = ds.getConnection()) {
+            c.setAutoCommit(false);
+
+            Map<String, Long> parentSk = new HashMap<>();
+
+            for (JdbcTableConfig table : jdbc.orderedTables()) {
+
+                List<Map<String, Object>> rows = data.get(table.alias());
+                if (rows == null) continue;
+
+                for (Map<String, Object> row : rows) {
+
+                    if (table.parent() != null) {
+                        row.put(table.parentFk(), parentSk.get(table.parent()));
+                    }
+
+                    Long sk = scdUpsert(c, table, row);
+                    parentSk.put(table.alias(), sk);
+                }
+            }
+
+            c.commit();
+        }
+    }
+
+    private Long scdUpsert(Connection c, JdbcTableConfig t, Map<String, Object> row)
+            throws SQLException {
+
+        Long existingSk = findCurrent(c, t, row);
+
+        if (existingSk != null) {
+            endDate(c, t, existingSk);
+        }
+
+        return insert(c, t, row);
+    }
+
+    private Long findCurrent(Connection c, JdbcTableConfig t, Map<String, Object> row)
+            throws SQLException {
+
+        String where = t.businessKeys().stream()
+                .map(k -> k + "=?")
+                .collect(Collectors.joining(" AND "));
+
+        String sql = """
+            SELECT %s FROM %s
+            WHERE %s AND is_current=true
+            """.formatted(t.pk(), t.tableName(), where);
+
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            int i = 1;
+            for (String k : t.businessKeys()) {
+                ps.setObject(i++, row.get(k));
+            }
+            ResultSet rs = ps.executeQuery();
+            return rs.next() ? rs.getLong(1) : null;
+        }
+    }
+
+    private void endDate(Connection c, JdbcTableConfig t, Long sk)
+            throws SQLException {
+
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE " + t.tableName() +
+                " SET valid_to=now(), is_current=false WHERE " + t.pk() + "=?")) {
+            ps.setLong(1, sk);
+            ps.executeUpdate();
+        }
+    }
+
+    private Long insert(Connection c, JdbcTableConfig t, Map<String, Object> row)
+            throws SQLException {
+
+        List<String> cols = t.insertableColumns();
+        String sql = "INSERT INTO " + t.tableName() +
+                "(" + String.join(",", cols) + ") VALUES (" +
+                cols.stream().map(x -> "?").collect(Collectors.joining(",")) +
+                ") RETURNING " + t.pk();
+
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            int i = 1;
+            for (String col : cols) {
+                ps.setObject(i++, row.get(col));
+            }
+            ResultSet rs = ps.executeQuery();
+            rs.next();
+            return rs.getLong(1);
+        }
+    }
+}
