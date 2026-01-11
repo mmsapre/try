@@ -1,0 +1,13 @@
+import java.util.List;
+
+public class MappingConfig {
+    private List<TableMapping> tables;
+
+    public List<TableMapping> getTables() {
+        return tables;
+    }
+
+    public void setTables(List<TableMapping> tables) {
+        this.tables = tables;
+    }
+}
