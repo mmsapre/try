@@ -1,0 +1,140 @@
+import java.util.*;
+
+public class TableMapping {
+
+    private String alias;              // e.g. "trust", "statement_profile", "statement_profile_address"
+    private String table;              // DB table name
+    private String mode;               // RAW / SPLIT / HYBRID (defaults to Mapping.defaultMode)
+    private boolean enabled = true;
+
+    // Repeat spec: to produce multiple rows
+    private RepeatConfig repeat;       // e.g. repeatOn: "trust" or listPath within item
+
+    // Variable bindings (produced by ScriptEvaluator)
+    // Example: columns to values expressions
+    private List<FieldConfig> fields = new ArrayList<>();
+
+    // JDBC behavior
+    private JdbcConfig jdbc = new JdbcConfig();
+
+    // SCD2 config
+    private Scd2Config scd2 = new Scd2Config();
+
+    public String getAlias() { return alias; }
+    public void setAlias(String alias) { this.alias = alias; }
+
+    public String getTable() { return table; }
+    public void setTable(String table) { this.table = table; }
+
+    public String getMode() { return mode; }
+    public void setMode(String mode) { this.mode = mode; }
+
+    public boolean isEnabled() { return enabled; }
+    public void setEnabled(boolean enabled) { this.enabled = enabled; }
+
+    public RepeatConfig getRepeat() { return repeat; }
+    public void setRepeat(RepeatConfig repeat) { this.repeat = repeat; }
+
+    public List<FieldConfig> getFields() { return fields; }
+    public void setFields(List<FieldConfig> fields) { this.fields = fields; }
+
+    public JdbcConfig getJdbc() { return jdbc; }
+    public void setJdbc(JdbcConfig jdbc) { this.jdbc = jdbc; }
+
+    public Scd2Config getScd2() { return scd2; }
+    public void setScd2(Scd2Config scd2) { this.scd2 = scd2; }
+
+    public boolean isScd2Enabled() { return scd2 != null && scd2.isEnabled(); }
+
+    // ---------- nested classes ----------
+    public static class RepeatConfig {
+        // Repeat over a root list path, e.g. "trust" OR use listPath inside each item for HYBRID
+        private String repeatOn;        // root path list to iterate (e.g. "trust")
+        private String bindItemAs = "item"; // ctx key for current item (default "item")
+
+        // For HYBRID / SPLIT child list inside each item:
+        private String listPath;        // path inside item to iterate (e.g. "statementProfile.mt535AddressList")
+        private String bindChildAs = "child"; // ctx key for current child
+
+        public String getRepeatOn() { return repeatOn; }
+        public void setRepeatOn(String repeatOn) { this.repeatOn = repeatOn; }
+
+        public String getBindItemAs() { return bindItemAs; }
+        public void setBindItemAs(String bindItemAs) { this.bindItemAs = bindItemAs; }
+
+        public String getListPath() { return listPath; }
+        public void setListPath(String listPath) { this.listPath = listPath; }
+
+        public String getBindChildAs() { return bindChildAs; }
+        public void setBindChildAs(String bindChildAs) { this.bindChildAs = bindChildAs; }
+    }
+
+    public static class Scd2Config {
+        private boolean enabled = false;
+
+        // business key columns used for SELECT current row (composite allowed)
+        private List<String> businessKeyColumns = new ArrayList<>();
+
+        // standard scd columns
+        private String validFromColumn = "valid_from";
+        private String validToColumn   = "valid_to";
+        private String isCurrentColumn = "is_current";
+        private String versionColumn   = "version";
+
+        // values (expressions) for scd columns
+        private String validFromExpr = "nowTs()";
+        private String validToExprNew = "farFutureTs()";
+        private String validToExprClose = "nowTs()";
+        private String isCurrentExprNew = "true";
+        private String isCurrentExprClose = "false";
+        private String nextVersionExpr = "coalesceInt(ctx.get('current_version'),0)+1";
+
+        // delta detection mode: HASH or ALWAYS_INSERT
+        private String deltaMode = "HASH"; // HASH or ALWAYS
+
+        // which columns participate in delta hash (optional); if empty use all non-key fields
+        private List<String> deltaColumns = new ArrayList<>();
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+
+        public List<String> getBusinessKeyColumns() { return businessKeyColumns; }
+        public void setBusinessKeyColumns(List<String> businessKeyColumns) { this.businessKeyColumns = businessKeyColumns; }
+
+        public String getValidFromColumn() { return validFromColumn; }
+        public void setValidFromColumn(String validFromColumn) { this.validFromColumn = validFromColumn; }
+
+        public String getValidToColumn() { return validToColumn; }
+        public void setValidToColumn(String validToColumn) { this.validToColumn = validToColumn; }
+
+        public String getIsCurrentColumn() { return isCurrentColumn; }
+        public void setIsCurrentColumn(String isCurrentColumn) { this.isCurrentColumn = isCurrentColumn; }
+
+        public String getVersionColumn() { return versionColumn; }
+        public void setVersionColumn(String versionColumn) { this.versionColumn = versionColumn; }
+
+        public String getValidFromExpr() { return validFromExpr; }
+        public void setValidFromExpr(String validFromExpr) { this.validFromExpr = validFromExpr; }
+
+        public String getValidToExprNew() { return validToExprNew; }
+        public void setValidToExprNew(String validToExprNew) { this.validToExprNew = validToExprNew; }
+
+        public String getValidToExprClose() { return validToExprClose; }
+        public void setValidToExprClose(String validToExprClose) { this.validToExprClose = validToExprClose; }
+
+        public String getIsCurrentExprNew() { return isCurrentExprNew; }
+        public void setIsCurrentExprNew(String isCurrentExprNew) { this.isCurrentExprNew = isCurrentExprNew; }
+
+        public String getIsCurrentExprClose() { return isCurrentExprClose; }
+        public void setIsCurrentExprClose(String isCurrentExprClose) { this.isCurrentExprClose = isCurrentExprClose; }
+
+        public String getNextVersionExpr() { return nextVersionExpr; }
+        public void setNextVersionExpr(String nextVersionExpr) { this.nextVersionExpr = nextVersionExpr; }
+
+        public String getDeltaMode() { return deltaMode; }
+        public void setDeltaMode(String deltaMode) { this.deltaMode = deltaMode; }
+
+        public List<String> getDeltaColumns() { return deltaColumns; }
+        public void setDeltaColumns(List<String> deltaColumns) { this.deltaColumns = deltaColumns; }
+    }
+}
