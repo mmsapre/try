@@ -1,0 +1,37 @@
+import com.fasterxml.jackson.databind.JsonNode;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+
+public final class JsonUtil {
+
+    private JsonUtil() {}
+
+    public static JsonNode at(JsonNode node, String path) {
+        if (node == null || path == null || path.isEmpty()) return node;
+        return node.at("/" + path.replace(".", "/"));
+    }
+
+    public static List<JsonNode> listAt(JsonNode node, String path) {
+        JsonNode n = at(node, path);
+        List<JsonNode> out = new ArrayList<>();
+        if (n == null || n.isMissingNode()) return out;
+
+        if (n.isArray()) {
+            for (JsonNode e : n) out.add(e);
+        } else {
+            out.add(n);
+        }
+        return out;
+    }
+
+    public static boolean exists(JsonNode node, String path) {
+        return !at(node, path).isMissingNode();
+    }
+
+    public static String asText(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) return null;
+        return node.isValueNode() ? node.asText() : node.toString();
+    }
+}
