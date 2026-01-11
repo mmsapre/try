@@ -1,0 +1,81 @@
+import com.fasterxml.jackson.databind.JsonNode;
+
+import java.util.*;
+
+public class MappingExecutor {
+
+    private final ScriptEvaluator evaluator;
+
+    public MappingExecutor(ScriptEvaluator evaluator) {
+        this.evaluator = evaluator;
+    }
+
+    public Map<String, List<Map<String, Object>>> execute(
+            MappingConfig config,
+            String rawPayload
+    ) throws Exception {
+
+        ExecutionContext ctx = new ExecutionContext();
+        evaluator.initPayload(rawPayload, ctx);
+
+        Map<String, List<Map<String, Object>>> result = new LinkedHashMap<>();
+
+        for (TableMapping t : config.getTables()) {
+            List<Map<String, Object>> rows = expandTable(t, ctx);
+            result.put(t.getAlias(), rows);
+        }
+        return result;
+    }
+
+    private List<Map<String, Object>> expandTable(
+            TableMapping t,
+            ExecutionContext ctx
+    ) {
+
+        List<Map<String, Object>> out = new ArrayList<>();
+        RepeatConfig r = t.getRepeat();
+
+        // repeat on root list (trust)
+        List<JsonNode> roots =
+                JsonUtil.listAt((JsonNode) ctx.get("root"), r.getRepeatOn());
+
+        for (JsonNode item : roots) {
+            ctx.put(r.getBindItemAs(), item);
+
+            if (t.getMode() == TableMapping.Mode.SPLIT) {
+                List<JsonNode> children =
+                        JsonUtil.listAt(item, r.getListPath());
+
+                for (JsonNode child : children) {
+                    ctx.put(r.getBindChildAs(), child);
+                    out.add(evalRow(t, ctx));
+                }
+
+            } else if (t.getMode() == TableMapping.Mode.HYBRID) {
+
+                JsonNode child =
+                        r.getObjectPath() != null
+                                ? JsonUtil.at(item, r.getObjectPath())
+                                : null;
+
+                ctx.put("child", child);
+                out.add(evalRow(t, ctx));
+
+            } else { // RAW
+                out.add(evalRow(t, ctx));
+            }
+        }
+        return out;
+    }
+
+    private Map<String, Object> evalRow(
+            TableMapping t,
+            ExecutionContext ctx
+    ) {
+
+        Map<String, Object> row = new LinkedHashMap<>();
+        t.getVariables().forEach((k, expr) ->
+                row.put(k, evaluator.eval(expr, ctx)));
+        return row;
+    }
+}
