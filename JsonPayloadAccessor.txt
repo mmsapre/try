@@ -1,0 +1,60 @@
+import com.fasterxml.jackson.databind.*;
+import com.fasterxml.jackson.databind.node.MissingNode;
+
+public class JsonPayloadAccessor implements PayloadAccessor {
+
+    private final ObjectMapper mapper;
+    private final JsonNode root;
+    private JsonNode item;   // current repeat item
+    private JsonNode child;  // current child inside listPath
+
+    public JsonPayloadAccessor(ObjectMapper mapper, JsonNode root) {
+        this.mapper = mapper;
+        this.root = root;
+    }
+
+    public void setItem(JsonNode item) { this.item = item; }
+    public void setChild(JsonNode child) { this.child = child; }
+
+    @Override
+    public Object parseRoot(String path) {
+        return extract(root, path);
+    }
+
+    @Override
+    public Object parseItem(String path) {
+        return extract(item, path);
+    }
+
+    @Override
+    public Object parseChild(String path) {
+        return extract(child, path);
+    }
+
+    @Override
+    public String toJson(Object o) {
+        try {
+            if (o == null) return null;
+            if (o instanceof JsonNode jn) return mapper.writeValueAsString(jn);
+            return mapper.writeValueAsString(o);
+        } catch (Exception e) {
+            throw new RuntimeException("toJson failed", e);
+        }
+    }
+
+    private Object extract(JsonNode base, String dotPath) {
+        if (base == null) return null;
+        if (dotPath == null || dotPath.isBlank()) return convert(base);
+
+        String ptr = "/" + dotPath.replace(".", "/");
+        JsonNode n = base.at(ptr);
+        if (n == null || n instanceof MissingNode || n.isMissingNode()) return null;
+        return convert(n);
+    }
+
+    private Object convert(JsonNode n) {
+        if (n == null || n.isMissingNode()) return null;
+        if (n.isValueNode()) return n.asText();
+        return n; // object or array => keep as JsonNode
+    }
+}
