@@ -71,4 +71,41 @@ public class ScriptEvaluatorHybridTest {
         assertEquals("T2", rows.get(2).get("trust_id"));
         assertEquals("STAT003", rows.get(2).get("swift"));
     }
+
+@Test
+void assertLeftHandVariablesBeforeJdbc() throws Exception {
+
+    ScriptEvaluator eval = new ScriptEvaluator();
+    ExecutionContext ctx = new ExecutionContext();
+
+    eval.initPayload(TRUST_PAYLOAD, ctx);
+
+    Mapping mapping = MappingLoader.load("mapping.yml");
+
+    new MappingExecutor(eval).execute(mapping, ctx);
+
+    // ---------- ASSERT TRUST ----------
+    List<Map<String,Object>> trust =
+            ctx.getRows("trust");
+
+    assertEquals(1, trust.size());
+    assertEquals("T1", trust.get(0).get("trust_id"));
+    assertEquals(2345, trust.get(0).get("customer_id"));
+
+    // ---------- ASSERT CLIENT CONTACT ----------
+    List<Map<String,Object>> contacts =
+            ctx.getRows("client_contact");
+
+    assertEquals(2, contacts.size());
+    assertTrue(contacts.get(0).containsKey("contact_name"));
+    assertTrue(contacts.get(0).containsKey("email"));
+
+    // ---------- ASSERT ADDRESS ----------
+    List<Map<String,Object>> addr =
+            ctx.getRows("statement_profile_address");
+
+    assertEquals("STATEMENT", addr.get(0).get("address_type"));
+    assertEquals("STAT001", addr.get(0).get("swift"));
+}
+
 }
