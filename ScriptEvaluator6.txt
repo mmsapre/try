@@ -1,0 +1,155 @@
+public class ScriptEvaluator {
+
+    private final ScriptEngine engine;
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    public ScriptEvaluator() {
+        this.engine = new ScriptEngineManager().getEngineByName("nashorn");
+        if (engine == null) {
+            throw new IllegalStateException("Add nashorn-core dependency");
+        }
+    }
+
+    /* ===============================
+       ENTRY
+       =============================== */
+
+    public void evaluateAllTables(String rawJson, Mapping mapping, ExecutionContext ctx) throws Exception {
+        initPayload(rawJson, ctx);
+
+        JsonPayloadAccessor acc =
+                new JsonPayloadAccessor(mapper, (List<JsonNode>) ctx.get("roots"));
+
+        // global variables (rare, but supported)
+        evalVars(mapping.getVariables(), ctx, acc);
+
+        for (TableMapping tm : mapping.orderedTables()) {
+            if (!tm.isEnabled()) continue;
+
+            List<Map<String,Object>> rows = switch (tm.getMode().toUpperCase()) {
+                case "RAW"    -> evalRaw(tm, ctx, acc);
+                case "SPLIT"  -> evalSplit(tm, ctx, acc);
+                case "HYBRID" -> evalHybrid(tm, ctx, acc);
+                default -> throw new IllegalArgumentException("Unsupported mode " + tm.getMode());
+            };
+
+            ctx.put("tableRows::" + tm.getAlias(), rows);
+        }
+    }
+
+    /* ===============================
+       PAYLOAD
+       =============================== */
+
+    private void initPayload(String rawJson, ExecutionContext ctx) throws Exception {
+        JsonNode root = mapper.readTree(rawJson);
+        List<JsonNode> roots = new ArrayList<>();
+
+        if (root.isArray()) root.forEach(roots::add);
+        else roots.add(root);
+
+        ctx.putGlobal("raw_payload", rawJson);
+        ctx.putGlobal("roots", roots);
+    }
+
+    /* ===============================
+       MODES
+       =============================== */
+
+    private List<Map<String,Object>> evalRaw(TableMapping tm, ExecutionContext ctx, JsonPayloadAccessor acc) {
+        List<Map<String,Object>> out = new ArrayList<>();
+        for (JsonNode root : acc.roots()) {
+            acc.setRoot(root);
+            out.add(evalRow(tm.getFields(), ctx, acc));
+        }
+        return out;
+    }
+
+    private List<Map<String,Object>> evalSplit(TableMapping tm, ExecutionContext ctx, JsonPayloadAccessor acc) {
+        TableMapping.Repeat r = tm.requireRepeat();
+        List<Map<String,Object>> out = new ArrayList<>();
+
+        for (JsonNode root : acc.roots()) {
+            acc.setRoot(root);
+
+            for (JsonNode item : acc.iterate(root, r.getRepeatOn())) {
+                acc.setItem(item);
+
+                for (JsonNode child : acc.iterate(item, r.getListPath())) {
+                    acc.setChild(child);
+                    out.add(evalRow(tm.getFields(), ctx, acc));
+                }
+            }
+        }
+        return out;
+    }
+
+    private List<Map<String,Object>> evalHybrid(TableMapping tm, ExecutionContext ctx, JsonPayloadAccessor acc) {
+        // Hybrid = Split + parent context
+        return evalSplit(tm, ctx, acc);
+    }
+
+    /* ===============================
+       ROW
+       =============================== */
+
+    private Map<String,Object> evalRow(
+            List<FieldMapping> fields,
+            ExecutionContext ctx,
+            JsonPayloadAccessor acc
+    ) {
+        Bindings b = bindings(ctx, acc);
+        Map<String,Object> row = new LinkedHashMap<>();
+
+        for (FieldMapping f : fields) {
+            Object v = eval(f.getValue(), b);
+            row.put(f.getName(), v);
+        }
+        return row;
+    }
+
+    /* ===============================
+       BINDINGS
+       =============================== */
+
+    private Bindings bindings(ExecutionContext ctx, JsonPayloadAccessor acc) {
+        Bindings b = engine.createBindings();
+
+        b.put("ctx", ctx.asMap());
+
+        b.put("parseRoot",  (Function<String,Object>) acc::parseRoot);
+        b.put("parseItem",  (Function<String,Object>) acc::parseItem);
+        b.put("parseChild", (Function<String,Object>) acc::parseChild);
+        b.put("toJson",     (Function<Object,String>) acc::toJson);
+
+        // JDBC-safe types
+        b.put("nowTs",       (Supplier<Timestamp>) () ->
+                Timestamp.valueOf(LocalDateTime.now()));
+        b.put("todayDate",   (Supplier<java.sql.Date>) () ->
+                java.sql.Date.valueOf(LocalDate.now()));
+        b.put("farFutureTs", (Supplier<Timestamp>) () ->
+                Timestamp.valueOf(LocalDateTime.of(2099,12,31,0,0)));
+
+        b.put("uuid", (Supplier<String>) () -> UUID.randomUUID().toString());
+
+        b.put("TRUE", Boolean.TRUE);
+        b.put("FALSE", Boolean.FALSE);
+
+        return b;
+    }
+
+    private Object eval(String expr, Bindings b) {
+        if (expr == null) return null;
+        try {
+            return engine.eval(expr, b);
+        } catch (ScriptException e) {
+            throw new RuntimeException("Eval failed: " + expr, e);
+        }
+    }
+
+    private void evalVars(Map<String,String> vars, ExecutionContext ctx, JsonPayloadAccessor acc) {
+        if (vars == null) return;
+        Bindings b = bindings(ctx, acc);
+        vars.forEach((k,v) -> ctx.put(k, eval(v, b)));
+    }
+}
