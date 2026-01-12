@@ -1,0 +1,71 @@
+import com.fasterxml.jackson.databind.*;
+
+import java.util.*;
+
+public class JsonPayloadAccessor {
+
+    private final ObjectMapper mapper;
+    private JsonNode root;
+    private JsonNode item;
+    private JsonNode child;
+    private final List<JsonNode> roots;
+
+    public JsonPayloadAccessor(ObjectMapper mapper, List<JsonNode> roots) {
+        this.mapper = mapper;
+        this.roots = roots;
+    }
+
+    public List<JsonNode> roots() {
+        return roots;
+    }
+
+    public void setRoot(JsonNode root) {
+        this.root = root;
+    }
+
+    public void setItem(JsonNode item) {
+        this.item = item;
+    }
+
+    public void setChild(JsonNode child) {
+        this.child = child;
+    }
+
+    public Object parseRoot(String path) {
+        return extract(root, path);
+    }
+
+    public Object parseItem(String path) {
+        return extract(item, path);
+    }
+
+    public Object parseChild(String path) {
+        return extract(child, path);
+    }
+
+    public List<JsonNode> iterate(JsonNode node, String dotPath) {
+        if (node == null || dotPath == null) return List.of();
+        JsonNode n = node.at("/" + dotPath.replace(".", "/"));
+        if (n == null || !n.isArray()) return List.of();
+
+        List<JsonNode> out = new ArrayList<>();
+        n.forEach(out::add);
+        return out;
+    }
+
+    public String toJson(Object o) {
+        try {
+            return mapper.writeValueAsString(o);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Object extract(JsonNode node, String path) {
+        if (node == null || path == null) return null;
+        JsonNode n = node.at("/" + path.replace(".", "/"));
+        if (n.isMissingNode() || n.isNull()) return null;
+        if (n.isValueNode()) return n.asText();
+        return n;
+    }
+}
