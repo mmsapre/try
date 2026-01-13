@@ -1,0 +1,10 @@
+public class FieldConfig {
+    private String name;   // output variable / db column key
+    private String expr;   // Nashorn expression
+
+    public String getName() { return name; }
+    public String getExpr() { return expr; }
+
+    public void setName(String name) { this.name = name; }
+    public void setExpr(String expr) { this.expr = expr; }
+}
