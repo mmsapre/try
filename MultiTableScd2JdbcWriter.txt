@@ -1,0 +1,509 @@
+/*
+ * Generic multi-table SCD2 JDBC writer (batch optimized)
+ * ------------------------------------------------------
+ * Consumes rowsets produced by ScriptEvaluator:
+ *   ctx.get("tableRows::<alias>") -> List<Map<String,Object>>
+ *
+ * Features:
+ *  - Transactional: all tables for a payload committed or rolled back together
+ *  - Batch updates/inserts per table
+ *  - SCD2 support: expire current rows then insert new rows
+ *  - Parent→child surrogate key propagation (parent_sk injected into child rows)
+ *  - Also supports non-SCD (APPEND / REPLACE)
+ *
+ * Assumptions:
+ *  - Your YAML provides per-table JDBC config with:
+ *      - selectCurrentSkQuery (optional but recommended for children)
+ *      - expireQuery
+ *      - insertQuery
+ *      - keyFields for matching current row (business key fields)
+ *      - compareFields (optional: if provided, delta detection skips unnecessary SCD2)
+ *      - parentSkColumn (e.g., trust_sk) used to inject into children
+ *      - childParentSkColumn (same column name in child)
+ *  - Database is PostgreSQL-like, but SQL is configurable.
+ */
+
+import javax.sql.DataSource;
+import java.sql.*;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.stream.Collectors;
+
+public class MultiTableScd2JdbcWriter {
+
+    private final DataSource ds;
+
+    public MultiTableScd2JdbcWriter(DataSource ds) {
+        this.ds = ds;
+    }
+
+    public void writePayloadRowsets(Mapping mapping, ExecutionContext ctx) throws Exception {
+        try (Connection conn = ds.getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                // Order tables: parents first
+                List<TableJdbcMapping> ordered = TableOrdering.order(mapping.getJdbc().getTables());
+
+                // store generated/current SKs by (alias, businessKeyHash) -> sk
+                ParentKeyStore keyStore = new ParentKeyStore();
+
+                for (TableJdbcMapping table : ordered) {
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> rows =
+                            (List<Map<String, Object>>) ctx.get("tableRows::" + table.getAlias());
+
+                    if (rows == null || rows.isEmpty()) {
+                        continue;
+                    }
+
+                    // Inject parent sk into child rows if configured
+                    if (table.getParentAlias() != null) {
+                        injectParentSk(table, rows, keyStore);
+                    }
+
+                    if (table.isScd()) {
+                        writeScd2Table(conn, table, rows, keyStore);
+                    } else {
+                        writeNonScdTable(conn, table, rows);
+                    }
+                }
+
+                conn.commit();
+            } catch (Exception e) {
+                conn.rollback();
+                throw e;
+            }
+        }
+    }
+
+    /* =========================
+       SCD2 table writing
+       ========================= */
+    private void writeScd2Table(
+            Connection conn,
+            TableJdbcMapping table,
+            List<Map<String, Object>> rows,
+            ParentKeyStore keyStore
+    ) throws Exception {
+
+        // Optional delta detection:
+        // If compareFields present, we only expire+insert when row differs from current.
+        boolean doDelta = table.getCompareFields() != null && !table.getCompareFields().isEmpty();
+
+        // 1) Resolve current sk for each row (by keyFields)
+        List<RowCtx> rowCtxs = new ArrayList<>(rows.size());
+        for (Map<String, Object> row : rows) {
+            RowCtx rc = new RowCtx(row);
+            rc.businessKeyHash = hashKeys(row, table.getKeyFields());
+            rc.currentSk = (table.getSelectCurrentSkQuery() != null)
+                    ? selectCurrentSk(conn, table, row)
+                    : null;
+
+            if (doDelta && rc.currentSk != null) {
+                rc.isDifferent = isDifferentFromCurrent(conn, table, row, rc.currentSk);
+            } else {
+                rc.isDifferent = true; // if no delta config, treat as changed
+            }
+            rowCtxs.add(rc);
+        }
+
+        // Filter rows that need SCD2 action
+        List<RowCtx> toChange = rowCtxs.stream().filter(r -> r.isDifferent).toList();
+        if (toChange.isEmpty()) {
+            // Still store SK mapping for children if needed (use current sk)
+            for (RowCtx rc : rowCtxs) {
+                if (rc.currentSk != null) {
+                    keyStore.put(table.getAlias(), rc.businessKeyHash, rc.currentSk);
+                }
+            }
+            return;
+        }
+
+        // 2) Expire current (batch)
+        if (table.getExpireQuery() != null) {
+            try (PreparedStatement ps = conn.prepareStatement(table.getExpireQuery())) {
+                int batch = 0;
+                for (RowCtx rc : toChange) {
+                    if (rc.currentSk == null) continue; // nothing to expire
+                    bindExpire(ps, table, rc);
+                    ps.addBatch();
+                    if (++batch % table.getBatchSize() == 0) ps.executeBatch();
+                }
+                ps.executeBatch();
+            }
+        }
+
+        // 3) Insert new current rows (batch, return sk if configured)
+        if (table.isReturnGeneratedSk()) {
+            insertReturningSk(conn, table, toChange, keyStore);
+        } else {
+            insertNoReturn(conn, table, toChange);
+        }
+    }
+
+    private Long selectCurrentSk(Connection conn, TableJdbcMapping table, Map<String, Object> row) throws Exception {
+        try (PreparedStatement ps = conn.prepareStatement(table.getSelectCurrentSkQuery())) {
+            int i = 1;
+            for (FieldMapping f : table.getKeyFields()) {
+                Object v = resolveValue(row, f);
+                JdbcBinder.bind(ps, i++, v, f.getType());
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    long sk = rs.getLong(1);
+                    return rs.wasNull() ? null : sk;
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean isDifferentFromCurrent(
+            Connection conn,
+            TableJdbcMapping table,
+            Map<String, Object> newRow,
+            Long currentSk
+    ) throws Exception {
+        // compareQuery should return compare columns for current row by SK
+        // Example:
+        //   select col1,col2,col3 from trust where trust_sk = ?
+        String q = table.getCompareQuery();
+        if (q == null) return true;
+
+        Map<String, Object> current = new LinkedHashMap<>();
+        try (PreparedStatement ps = conn.prepareStatement(q)) {
+            JdbcBinder.bind(ps, 1, currentSk, "BIGINT");
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return true;
+                int idx = 1;
+                for (String col : table.getCompareFields()) {
+                    current.put(col, rs.getObject(idx++));
+                }
+            }
+        }
+
+        for (String col : table.getCompareFields()) {
+            Object a = normalize(current.get(col));
+            Object b = normalize(newRow.get(col));
+            if (!Objects.equals(a, b)) return true;
+        }
+        return false;
+    }
+
+    private void bindExpire(PreparedStatement ps, TableJdbcMapping table, RowCtx rc) throws Exception {
+        // expireQuery is expected like:
+        //   update <table> set valid_to=?, is_current=false where <sk_col>=? and is_current=true
+        int i = 1;
+        Timestamp now = Timestamp.valueOf(LocalDateTime.now());
+        JdbcBinder.bind(ps, i++, now, "TIMESTAMP");
+        JdbcBinder.bind(ps, i++, rc.currentSk, "BIGINT");
+    }
+
+    private void insertNoReturn(Connection conn, TableJdbcMapping table, List<RowCtx> rows) throws Exception {
+        try (PreparedStatement ps = conn.prepareStatement(table.getInsertQuery())) {
+            int batch = 0;
+            for (RowCtx rc : rows) {
+                bindInsert(ps, table, rc.row);
+                ps.addBatch();
+                if (++batch % table.getBatchSize() == 0) ps.executeBatch();
+            }
+            ps.executeBatch();
+        }
+    }
+
+    private void insertReturningSk(
+            Connection conn,
+            TableJdbcMapping table,
+            List<RowCtx> rows,
+            ParentKeyStore keyStore
+    ) throws Exception {
+        // Best practice in Postgres: use "INSERT ... RETURNING sk"
+        // Here we do row-by-row to collect sk; still OK because only for parent keys.
+        // For high throughput, you can also use COPY or temp table + join, but keep it simple.
+        try (PreparedStatement ps = conn.prepareStatement(table.getInsertQuery())) {
+            for (RowCtx rc : rows) {
+                bindInsert(ps, table, rc.row);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        long sk = rs.getLong(1);
+                        keyStore.put(table.getAlias(), rc.businessKeyHash, sk);
+                    }
+                }
+            }
+        }
+    }
+
+    private void bindInsert(PreparedStatement ps, TableJdbcMapping table, Map<String, Object> row) throws Exception {
+        int i = 1;
+        for (FieldMapping f : table.getInsertFields()) {
+            Object v = resolveValue(row, f);
+            JdbcBinder.bind(ps, i++, v, f.getType());
+        }
+    }
+
+    /* =========================
+       Non-SCD table writing
+       ========================= */
+    private void writeNonScdTable(Connection conn, TableJdbcMapping table, List<Map<String, Object>> rows) throws Exception {
+        if (table.getNonScdMode() == NonScdMode.REPLACE && table.getDeleteQuery() != null) {
+            // delete using key fields (or parent key)
+            try (PreparedStatement ps = conn.prepareStatement(table.getDeleteQuery())) {
+                int batch = 0;
+                for (Map<String, Object> row : rows) {
+                    int i = 1;
+                    for (FieldMapping f : table.getKeyFields()) {
+                        Object v = resolveValue(row, f);
+                        JdbcBinder.bind(ps, i++, v, f.getType());
+                    }
+                    ps.addBatch();
+                    if (++batch % table.getBatchSize() == 0) ps.executeBatch();
+                }
+                ps.executeBatch();
+            }
+        }
+
+        // append inserts
+        try (PreparedStatement ps = conn.prepareStatement(table.getInsertQuery())) {
+            int batch = 0;
+            for (Map<String, Object> row : rows) {
+                int i = 1;
+                for (FieldMapping f : table.getInsertFields()) {
+                    Object v = resolveValue(row, f);
+                    JdbcBinder.bind(ps, i++, v, f.getType());
+                }
+                ps.addBatch();
+                if (++batch % table.getBatchSize() == 0) ps.executeBatch();
+            }
+            ps.executeBatch();
+        }
+    }
+
+    /* =========================
+       Parent SK injection
+       ========================= */
+    private void injectParentSk(
+            TableJdbcMapping childTable,
+            List<Map<String, Object>> childRows,
+            ParentKeyStore keyStore
+    ) {
+        String parentAlias = childTable.getParentAlias();
+        String parentSkColumn = childTable.getParentSkColumn();
+        String childParentSkColumn = childTable.getChildParentSkColumn();
+
+        if (parentAlias == null || parentSkColumn == null || childParentSkColumn == null) return;
+
+        for (Map<String, Object> row : childRows) {
+            // child row must have enough business key fields of parent to hash it;
+            // easiest: you computed parent business key columns into child variables too.
+            // Example: trust_id, customer_id present in child row.
+            String parentHash = hashKeys(row, childTable.getParentBusinessKeyFields());
+
+            Long parentSk = keyStore.get(parentAlias, parentHash);
+            if (parentSk == null) {
+                // If parent is not changed (delta skipped), the store might not have it,
+                // because we didn't insert. In that case, you should include selectCurrentSkQuery
+                // for parent and store it earlier. We still allow null here, but your DB may fail.
+            }
+            row.put(childParentSkColumn, parentSk);
+        }
+    }
+
+    /* =========================
+       Utilities
+       ========================= */
+    private static Object resolveValue(Map<String, Object> row, FieldMapping f) {
+        // If FieldMapping.value is set, treat it as a literal key lookup:
+        //   - when value starts with "@" -> read row.get(without @)
+        //   - else if value is null -> use name as key
+        // In your pipeline, ScriptEvaluator already produced row values.
+        String v = f.getValue();
+        if (v == null || v.isBlank()) return row.get(f.getName());
+        if (v.startsWith("@")) return row.get(v.substring(1));
+        return row.get(v);
+    }
+
+    private static Object normalize(Object o) {
+        if (o instanceof java.sql.Timestamp ts) return ts.toInstant();
+        if (o instanceof java.sql.Date d) return d.toLocalDate();
+        return o;
+    }
+
+    private static String hashKeys(Map<String, Object> row, List<FieldMapping> keys) {
+        if (keys == null || keys.isEmpty()) return "";
+        return keys.stream()
+                .map(k -> String.valueOf(resolveValue(row, k)))
+                .collect(Collectors.joining("|"));
+    }
+
+    /* =========================
+       Helper classes
+       ========================= */
+
+    private static class RowCtx {
+        final Map<String, Object> row;
+        String businessKeyHash;
+        Long currentSk;
+        boolean isDifferent;
+
+        RowCtx(Map<String, Object> row) { this.row = row; }
+    }
+
+    private static class ParentKeyStore {
+        private final Map<String, Map<String, Long>> store = new HashMap<>();
+
+        void put(String alias, String keyHash, Long sk) {
+            store.computeIfAbsent(alias, a -> new HashMap<>()).put(keyHash, sk);
+        }
+
+        Long get(String alias, String keyHash) {
+            Map<String, Long> m = store.get(alias);
+            return m == null ? null : m.get(keyHash);
+        }
+    }
+
+    public enum NonScdMode { APPEND, REPLACE }
+
+    /* =========================
+       JDBC mapping model (for YAML)
+       ========================= */
+
+    public static class JdbcRootConfig {
+        private List<TableJdbcMapping> tables;
+        public List<TableJdbcMapping> getTables() { return tables; }
+        public void setTables(List<TableJdbcMapping> tables) { this.tables = tables; }
+    }
+
+    public static class TableJdbcMapping {
+        private String alias;
+        private boolean scd;
+        private String parentAlias;
+
+        // Parent SK injection settings
+        private String parentSkColumn;         // e.g., trust_sk (in parent table)
+        private String childParentSkColumn;    // e.g., trust_sk (column in child insert)
+        private List<FieldMapping> parentBusinessKeyFields; // fields in CHILD row to hash parent
+
+        // SCD2
+        private String selectCurrentSkQuery;   // by keyFields -> returns current SK
+        private String expireQuery;            // expire by sk
+        private String insertQuery;            // insert (optionally returning sk)
+        private boolean returnGeneratedSk;     // insert returns sk (recommended for parent)
+
+        // Delta
+        private String compareQuery;           // by sk -> returns compareFields
+        private List<String> compareFields;
+
+        // Non-SCD
+        private NonScdMode nonScdMode = NonScdMode.APPEND;
+        private String deleteQuery;            // used when REPLACE
+
+        // Fields
+        private List<FieldMapping> keyFields;    // business keys
+        private List<FieldMapping> insertFields; // all insert params
+
+        private int batchSize = 500;
+
+        public String getAlias() { return alias; }
+        public boolean isScd() { return scd; }
+        public String getParentAlias() { return parentAlias; }
+        public String getParentSkColumn() { return parentSkColumn; }
+        public String getChildParentSkColumn() { return childParentSkColumn; }
+        public List<FieldMapping> getParentBusinessKeyFields() { return parentBusinessKeyFields; }
+        public String getSelectCurrentSkQuery() { return selectCurrentSkQuery; }
+        public String getExpireQuery() { return expireQuery; }
+        public String getInsertQuery() { return insertQuery; }
+        public boolean isReturnGeneratedSk() { return returnGeneratedSk; }
+        public String getCompareQuery() { return compareQuery; }
+        public List<String> getCompareFields() { return compareFields; }
+        public NonScdMode getNonScdMode() { return nonScdMode; }
+        public String getDeleteQuery() { return deleteQuery; }
+        public List<FieldMapping> getKeyFields() { return keyFields; }
+        public List<FieldMapping> getInsertFields() { return insertFields; }
+        public int getBatchSize() { return batchSize; }
+    }
+
+    public static class FieldMapping {
+        private String name;   // db column or row map key
+        private String type;   // VARCHAR, BIGINT, TIMESTAMP...
+        private String value;  // optional row map key override (use "@key")
+
+        public String getName() { return name; }
+        public String getType() { return type; }
+        public String getValue() { return value; }
+    }
+
+    /* =========================
+       Ordering: parent first
+       ========================= */
+    static class TableOrdering {
+        static List<TableJdbcMapping> order(List<TableJdbcMapping> tables) {
+            Map<String, TableJdbcMapping> byAlias = new HashMap<>();
+            for (var t : tables) byAlias.put(t.getAlias(), t);
+
+            List<TableJdbcMapping> out = new ArrayList<>();
+            Set<String> visited = new HashSet<>();
+
+            for (var t : tables) dfs(t, byAlias, visited, out);
+            return out;
+        }
+
+        private static void dfs(TableJdbcMapping t,
+                                Map<String, TableJdbcMapping> byAlias,
+                                Set<String> visited,
+                                List<TableJdbcMapping> out) {
+            if (!visited.add(t.getAlias())) return;
+
+            if (t.getParentAlias() != null) {
+                TableJdbcMapping p = byAlias.get(t.getParentAlias());
+                if (p != null) dfs(p, byAlias, visited, out);
+            }
+            out.add(t);
+        }
+    }
+
+    /* =========================
+       JDBC binder
+       ========================= */
+    static class JdbcBinder {
+        static void bind(PreparedStatement ps, int idx, Object val, String type) throws Exception {
+            if (val == null) {
+                ps.setObject(idx, null);
+                return;
+            }
+            String t = type == null ? "" : type.toUpperCase(Locale.ROOT);
+
+            switch (t) {
+                case "VARCHAR", "TEXT" -> ps.setString(idx, String.valueOf(val));
+                case "BIGINT" -> ps.setLong(idx, ((Number) val).longValue());
+                case "INT", "INTEGER" -> ps.setInt(idx, ((Number) val).intValue());
+                case "BOOLEAN" -> ps.setBoolean(idx, (val instanceof Boolean b) ? b : Boolean.parseBoolean(String.valueOf(val)));
+                case "TIMESTAMP" -> {
+                    if (val instanceof Timestamp ts) ps.setTimestamp(idx, ts);
+                    else ps.setTimestamp(idx, Timestamp.valueOf(String.valueOf(val)));
+                }
+                case "DATE" -> {
+                    if (val instanceof java.sql.Date d) ps.setDate(idx, d);
+                    else ps.setDate(idx, java.sql.Date.valueOf(String.valueOf(val)));
+                }
+                default -> ps.setObject(idx, val);
+            }
+        }
+    }
+}
+
+/* ========= Mapping extension: add JDBC config ========= */
+
+class Mapping {
+    private MultiTableScd2JdbcWriter.JdbcRootConfig jdbc;
+    public MultiTableScd2JdbcWriter.JdbcRootConfig getJdbc() { return jdbc; }
+}
+
+/* ========= ExecutionContext placeholder ========= */
+
+class ExecutionContext {
+    private final Map<String, Object> map = new HashMap<>();
+    public void put(String k, Object v) { map.put(k, v); }
+    public void putGlobal(String k, Object v) { map.put(k, v); }
+    public Object get(String k) { return map.get(k); }
+    public Map<String,Object> asMap(){ return map; }
+}
