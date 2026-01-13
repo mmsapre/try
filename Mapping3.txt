@@ -1,0 +1,17 @@
+import java.util.List;
+import java.util.Map;
+
+public class Mapping {
+
+    private String defaultMode = "RAW";
+    private Map<String, String> variables;
+    private List<TableMapping> tables;
+
+    public String getDefaultMode() { return defaultMode; }
+    public Map<String, String> getVariables() { return variables; }
+    public List<TableMapping> getTables() { return tables; }
+
+    public List<TableMapping> orderedTables() {
+        return tables;
+    }
+}
