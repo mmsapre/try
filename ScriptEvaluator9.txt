@@ -1,0 +1,163 @@
+import com.fasterxml.jackson.databind.*;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+
+import javax.script.*;
+import java.sql.Timestamp;
+import java.time.*;
+import java.util.*;
+import java.util.function.Function;
+
+public class ScriptEvaluator {
+
+    private final ScriptEngine engine;
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    public ScriptEvaluator() {
+        this.engine = new ScriptEngineManager().getEngineByName("nashorn");
+        if (engine == null) {
+            throw new IllegalStateException("Add nashorn-core dependency");
+        }
+    }
+
+    /* ---------- INIT PAYLOAD ---------- */
+
+    public void initPayload(String rawJson, ExecutionContext ctx) throws Exception {
+        JsonNode root = mapper.readTree(rawJson);
+
+        ctx.putGlobal("raw_payload", rawJson);
+        ctx.putGlobal("rootNode", root);
+    }
+
+    /* ---------- MAIN ENTRY ---------- */
+
+    public void evaluateAllTables(String rawPayload, Mapping mapping, ExecutionContext ctx) throws Exception {
+
+        initPayload(rawPayload, ctx);
+
+        // global variables
+        evalVars(mapping.getVariables(), ctx, null);
+
+        for (TableMapping tm : mapping.orderedTables()) {
+            List<Map<String,Object>> rows = switch (tm.getMode()) {
+                case "RAW" -> evalRaw(tm, ctx);
+                case "SPLIT" -> evalSplit(tm, ctx);
+                case "HYBRID" -> evalHybrid(tm, ctx);
+                default -> throw new IllegalArgumentException(tm.getMode());
+            };
+
+            ctx.put("tableRows::" + tm.getAlias(), rows);
+        }
+    }
+
+    /* ---------- RAW ---------- */
+
+    private List<Map<String,Object>> evalRaw(TableMapping tm, ExecutionContext ctx) {
+        List<JsonNode> items = iterateRoots(ctx, tm.getRepeat().getRepeatOn());
+        List<Map<String,Object>> out = new ArrayList<>();
+
+        for (JsonNode item : items) {
+            ctx.put(tm.getRepeat().getBindItemAs(), item);
+            out.add(evalRow(tm, ctx, item, null));
+        }
+        return out;
+    }
+
+    /* ---------- SPLIT ---------- */
+
+    private List<Map<String,Object>> evalSplit(TableMapping tm, ExecutionContext ctx) {
+        List<JsonNode> items = iterateRoots(ctx, tm.getRepeat().getRepeatOn());
+        List<Map<String,Object>> out = new ArrayList<>();
+
+        for (JsonNode item : items) {
+            ctx.put(tm.getRepeat().getBindItemAs(), item);
+            for (JsonNode child : iterateChildren(item, tm.getRepeat().getListPath())) {
+                ctx.put(tm.getRepeat().getBindChildAs(), child);
+                out.add(evalRow(tm, ctx, item, child));
+            }
+        }
+        return out;
+    }
+
+    /* ---------- HYBRID ---------- */
+
+    private List<Map<String,Object>> evalHybrid(TableMapping tm, ExecutionContext ctx) {
+        return evalSplit(tm, ctx);
+    }
+
+    /* ---------- ROW ---------- */
+
+    private Map<String,Object> evalRow(TableMapping tm, ExecutionContext ctx,
+                                       JsonNode item, JsonNode child) {
+
+        Bindings b = bindings(ctx, item, child);
+        Map<String,Object> row = new LinkedHashMap<>();
+
+        for (FieldConfig f : tm.getFields()) {
+            try {
+                row.put(f.getName(), engine.eval(f.getExpr(), b));
+            } catch (Exception e) {
+                throw new RuntimeException(f.getExpr(), e);
+            }
+        }
+        return row;
+    }
+
+    /* ---------- HELPERS ---------- */
+
+    private void evalVars(Map<String,String> vars, ExecutionContext ctx, Bindings reuse) {
+        if (vars == null) return;
+        Bindings b = reuse != null ? reuse : bindings(ctx, null, null);
+        vars.forEach((k,v) -> {
+            try { ctx.put(k, engine.eval(v, b)); }
+            catch (Exception e) { throw new RuntimeException(v, e); }
+        });
+    }
+
+    private Bindings bindings(ExecutionContext ctx, JsonNode item, JsonNode child) {
+        Bindings b = engine.createBindings();
+
+        JsonNode root = (JsonNode) ctx.get("rootNode");
+
+        b.put("parseRoot", (Function<String,Object>) p -> at(root,p));
+        b.put("parseItem", (Function<String,Object>) p -> at(item,p));
+        b.put("parseChild",(Function<String,Object>) p -> at(child,p));
+
+        b.put("nowTs", (Supplier<Timestamp>) () ->
+                Timestamp.valueOf(LocalDateTime.now()));
+        b.put("farFutureTs",(Supplier<Timestamp>) () ->
+                Timestamp.valueOf(LocalDateTime.of(2099,12,31,0,0)));
+
+        b.put("TRUE", true);
+        b.put("FALSE", false);
+
+        return b;
+    }
+
+    private Object at(JsonNode n, String p) {
+        if (n == null) return null;
+        JsonNode v = n.at("/" + p.replace(".","/"));
+        return v.isMissingNode() ? null : v.isValueNode() ? v.asText() : v;
+    }
+
+    private List<JsonNode> iterateRoots(ExecutionContext ctx, String path) {
+        JsonNode root = (JsonNode) ctx.get("rootNode");
+        if (root.isArray()) {
+            List<JsonNode> out = new ArrayList<>();
+            root.forEach(r -> out.addAll(iterateArray(r, path)));
+            return out;
+        }
+        return iterateArray(root, path);
+    }
+
+    private List<JsonNode> iterateArray(JsonNode n, String path) {
+        JsonNode arr = n.at("/" + path.replace(".","/"));
+        if (!arr.isArray()) return List.of();
+        List<JsonNode> out = new ArrayList<>();
+        arr.forEach(out::add);
+        return out;
+    }
+
+    private List<JsonNode> iterateChildren(JsonNode item, String path) {
+        return iterateArray(item, path);
+    }
+}
