@@ -1,0 +1,32 @@
+import java.util.List;
+import java.util.Map;
+
+public class TableMapping {
+
+    private String alias;
+    private String mode;          // RAW | SPLIT | HYBRID
+    private boolean scd;
+    private String parentAlias;
+
+    private RepeatConfig repeat;
+    private List<FieldConfig> fields;
+
+    public String getAlias() { return alias; }
+    public String getMode() { return mode; }
+    public boolean isScd() { return scd; }
+    public String getParentAlias() { return parentAlias; }
+    public RepeatConfig getRepeat() { return repeat; }
+    public List<FieldConfig> getFields() { return fields; }
+
+    public static class RepeatConfig {
+        private String repeatOn;      // trust
+        private String bindItemAs;    // item
+        private String listPath;      // clientData.clientContacts
+        private String bindChildAs;   // child
+
+        public String getRepeatOn() { return repeatOn; }
+        public String getBindItemAs() { return bindItemAs; }
+        public String getListPath() { return listPath; }
+        public String getBindChildAs() { return bindChildAs; }
+    }
+}
