@@ -1,0 +1,40 @@
+defaultMode: RAW
+
+tables:
+
+  - alias: trust
+    mode: HYBRID
+    scd: true
+    repeat:
+      repeatOn: trust
+      bindItemAs: item
+    fields:
+      - name: trust_id
+        expr: "parseItem('trustId')"
+      - name: trust_name
+        expr: "parseItem('trustName')"
+      - name: valid_from
+        expr: "nowTs.get()"
+      - name: valid_to
+        expr: "null"
+      - name: is_current
+        expr: "TRUE"
+
+  - alias: client_contact
+    mode: SPLIT
+    scd: true
+    parentAlias: trust
+    repeat:
+      repeatOn: trust
+      bindItemAs: item
+      listPath: clientData.clientContacts
+      bindChildAs: child
+    fields:
+      - name: contact_name
+        expr: "parseChild('contactPersonName')"
+      - name: email
+        expr: "parseChild('emailAddress')"
+      - name: valid_from
+        expr: "nowTs.get()"
+      - name: is_current
+        expr: "TRUE"
