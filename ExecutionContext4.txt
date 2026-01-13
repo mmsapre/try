@@ -1,0 +1,22 @@
+import java.util.*;
+
+public class ExecutionContext {
+
+    private final Map<String, Object> global = new HashMap<>();
+
+    public void put(String k, Object v) {
+        global.put(k, v);
+    }
+
+    public void putGlobal(String k, Object v) {
+        global.put(k, v);
+    }
+
+    public Object get(String k) {
+        return global.get(k);
+    }
+
+    public Map<String, Object> asMap() {
+        return global;
+    }
+}
