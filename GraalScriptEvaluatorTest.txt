@@ -1,0 +1,116 @@
+import org.junit.jupiter.api.*;
+import java.util.*;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class GraalScriptEvaluatorTest {
+
+    GraalScriptEvaluator eval;
+    ExecutionContext ctx;
+
+    @BeforeEach
+    void init() {
+        eval = new GraalScriptEvaluator();
+        ctx = new ExecutionContext();
+    }
+
+    @Test
+    void raw_mapping_from_array_payload() throws Exception {
+
+        String payload = """
+        [
+          { "customerId": 100, "trust": [{ "trustId": "T1", "status": "ACTIVE" }] }
+        ]
+        """;
+
+        Map<String,String> fields = Map.of(
+                "customer_id", "parseRoot('customerId')",
+                "trust_id",    "parseItem('trustId')",
+                "status",      "parseItem('status')"
+        );
+
+        List<Map<String,Object>> rows =
+                eval.evaluate(
+                        payload,
+                        GraalScriptEvaluator.Mode.RAW,
+                        "trust",
+                        null,
+                        "item",
+                        null,
+                        fields,
+                        ctx
+                );
+
+        assertEquals(1, rows.size());
+        assertEquals("T1", rows.get(0).get("trust_id"));
+    }
+
+    @Test
+    void split_child_array() throws Exception {
+
+        String payload = """
+        {
+          "trust": [{
+            "trustId": "T1",
+            "clientData": {
+              "clientContacts": [
+                { "emailAddress": "a@test.com" },
+                { "emailAddress": "b@test.com" }
+              ]
+            }
+          }]
+        }
+        """;
+
+        Map<String,String> fields = Map.of(
+                "trust_id", "parseItem('trustId')",
+                "email",    "parseChild('emailAddress')"
+        );
+
+        List<Map<String,Object>> rows =
+                eval.evaluate(
+                        payload,
+                        GraalScriptEvaluator.Mode.SPLIT,
+                        "trust",
+                        "clientData.clientContacts",
+                        "item",
+                        "child",
+                        fields,
+                        ctx
+                );
+
+        assertEquals(2, rows.size());
+        assertEquals("a@test.com", rows.get(0).get("email"));
+        assertEquals("b@test.com", rows.get(1).get("email"));
+    }
+
+    @Test
+    void hybrid_parent_only_when_no_children() throws Exception {
+
+        String payload = """
+        {
+          "trust": [{ "trustId": "T1", "status": "ACTIVE" }]
+        }
+        """;
+
+        Map<String,String> fields = Map.of(
+                "trust_id", "parseItem('trustId')",
+                "status",   "parseItem('status')"
+        );
+
+        List<Map<String,Object>> rows =
+                eval.evaluate(
+                        payload,
+                        GraalScriptEvaluator.Mode.HYBRID,
+                        "trust",
+                        "statementProfile.mt535AddressList",
+                        "item",
+                        "child",
+                        fields,
+                        ctx
+                );
+
+        assertEquals(1, rows.size());
+        assertEquals("T1", rows.get(0).get("trust_id"));
+    }
+}
