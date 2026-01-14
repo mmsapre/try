@@ -1,0 +1,184 @@
+import com.fasterxml.jackson.databind.*;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+
+import javax.script.*;
+import java.sql.Timestamp;
+import java.time.*;
+import java.util.*;
+import java.util.function.Function;
+import java.util.function.Supplier;
+
+/**
+ * GraalJS-based ScriptEvaluator
+ * -----------------------------
+ * - Fully config-agnostic
+ * - No dependency on FieldConfig / RepeatConfig
+ * - Payload may be Object OR Array
+ * - Evaluates expressions per-row
+ */
+public class GraalScriptEvaluator {
+
+    private final ScriptEngine engine;
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    public GraalScriptEvaluator() {
+        this.engine = new ScriptEngineManager().getEngineByName("graal.js");
+        if (engine == null) {
+            throw new IllegalStateException("GraalJS ScriptEngine not found");
+        }
+    }
+
+    /* =======================
+       MAIN ENTRY
+       ======================= */
+
+    public List<Map<String,Object>> evaluate(
+            String rawJson,
+            Mode mode,
+            String repeatOnPath,
+            String listPath,
+            String bindItemAs,
+            String bindChildAs,
+            Map<String,String> fieldExprs,
+            ExecutionContext ctx
+    ) throws Exception {
+
+        JsonNode root = mapper.readTree(rawJson);
+        List<JsonNode> roots = normalizeRoots(root);
+
+        List<Map<String,Object>> out = new ArrayList<>();
+
+        for (JsonNode item : iterateRoots(roots, repeatOnPath)) {
+
+            ctx.put(bindItemAs, item);
+
+            if (mode == Mode.RAW) {
+                out.add(evalRow(fieldExprs, ctx, item, null));
+                continue;
+            }
+
+            List<JsonNode> children = iterateChildren(item, listPath);
+
+            if (mode == Mode.HYBRID && children.isEmpty()) {
+                out.add(evalRow(fieldExprs, ctx, item, null));
+                continue;
+            }
+
+            for (JsonNode child : children) {
+                ctx.put(bindChildAs, child);
+                out.add(evalRow(fieldExprs, ctx, item, child));
+            }
+        }
+
+        return out;
+    }
+
+    /* =======================
+       ROW EVALUATION
+       ======================= */
+
+    private Map<String,Object> evalRow(
+            Map<String,String> fields,
+            ExecutionContext ctx,
+            JsonNode item,
+            JsonNode child
+    ) throws Exception {
+
+        Bindings b = createBindings(ctx, item, child);
+        Map<String,Object> row = new LinkedHashMap<>();
+
+        for (var e : fields.entrySet()) {
+            Object v = engine.eval(e.getValue(), b);
+            row.put(e.getKey(), normalize(v));
+        }
+        return row;
+    }
+
+    /* =======================
+       BINDINGS
+       ======================= */
+
+    private Bindings createBindings(ExecutionContext ctx, JsonNode item, JsonNode child) {
+
+        Bindings b = engine.createBindings();
+
+        b.put("ctx", ctx.asMap());
+
+        b.put("parseRoot", (Function<String,Object>) p ->
+                extract(ctx.get("rootNode"), p));
+
+        b.put("parseItem", (Function<String,Object>) p ->
+                extract(item, p));
+
+        b.put("parseChild", (Function<String,Object>) p ->
+                extract(child, p));
+
+        b.put("nowTs", (Supplier<Timestamp>) () ->
+                Timestamp.valueOf(LocalDateTime.now()));
+
+        b.put("farFutureTs", (Supplier<Timestamp>) () ->
+                Timestamp.valueOf(LocalDateTime.of(2099,12,31,0,0)));
+
+        b.put("uuid", (Supplier<String>) () ->
+                UUID.randomUUID().toString());
+
+        b.put("TRUE", Boolean.TRUE);
+        b.put("FALSE", Boolean.FALSE);
+
+        return b;
+    }
+
+    /* =======================
+       JSON HELPERS
+       ======================= */
+
+    private Object extract(Object node, String path) {
+        if (!(node instanceof JsonNode jn)) return null;
+        JsonNode v = jn.at("/" + path.replace(".", "/"));
+        if (v.isMissingNode() || v.isNull()) return null;
+        if (v.isValueNode()) return v.asText();
+        return v;
+    }
+
+    private List<JsonNode> normalizeRoots(JsonNode root) {
+        if (root.isArray()) {
+            List<JsonNode> l = new ArrayList<>();
+            root.forEach(l::add);
+            return l;
+        }
+        return List.of(root);
+    }
+
+    private List<JsonNode> iterateRoots(List<JsonNode> roots, String path) {
+        if (path == null || path.isBlank()) return roots;
+
+        List<JsonNode> out = new ArrayList<>();
+        for (JsonNode r : roots) {
+            JsonNode arr = r.at("/" + path.replace(".", "/"));
+            if (arr.isArray()) arr.forEach(out::add);
+        }
+        return out;
+    }
+
+    private List<JsonNode> iterateChildren(JsonNode item, String path) {
+        if (path == null || path.isBlank()) return List.of();
+        JsonNode arr = item.at("/" + path.replace(".", "/"));
+        if (!arr.isArray()) return List.of();
+        List<JsonNode> out = new ArrayList<>();
+        arr.forEach(out::add);
+        return out;
+    }
+
+    private Object normalize(Object v) {
+        if (v instanceof Timestamp ts) return ts;
+        return v;
+    }
+
+    /* =======================
+       MODE ENUM
+       ======================= */
+
+    public enum Mode {
+        RAW, SPLIT, HYBRID
+    }
+}
