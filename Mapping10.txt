@@ -1,0 +1,8 @@
+public class Mapping {
+
+    private List<TableMapping> tables;
+
+    public List<TableMapping> orderedTables() {
+        return tables; // already ordered in YAML (parent first)
+    }
+}
