@@ -1,0 +1,25 @@
+public class TableJdbcMapping {
+
+    private String alias;
+    private boolean scd;
+    private String parentAlias;
+
+    private List<String> businessKeys;
+    private List<String> parentBusinessKeys;
+
+    private String selectCurrentSkSql;
+    private String compareSql;
+    private List<String> compareColumns;
+
+    private String expireSql;
+    private String insertSql;
+    private boolean returnGeneratedSk;
+
+    private List<String> insertColumns;
+
+    private String childParentSkColumn;
+
+    private int batchSize = 500;
+
+    // getters omitted for brevity
+}
