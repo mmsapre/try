@@ -1,0 +1,28 @@
+ParentKeyStore parentKeys = new ParentKeyStore();
+
+/* Order is driven by Mapping (parents first) */
+for (TableMapping tm : mapping.orderedTables()) {
+
+    /* JDBC behavior comes from jdbc.yaml */
+    TableJdbcMapping table =
+            jdbcConfig.getByAlias(tm.getAlias());
+
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> rows =
+            (List<Map<String, Object>>) ctx.get("tableRows::" + tm.getAlias());
+
+    if (rows == null || rows.isEmpty()) {
+        continue;
+    }
+
+    /* Parent SK propagation */
+    if (table.getParentAlias() != null) {
+        injectParentSk(table, rows, parentKeys);
+    }
+
+    if (table.isScd()) {
+        writeScd2Table(conn, table, rows, parentKeys);
+    } else {
+        writeNonScdTable(conn, table, rows);
+    }
+}
