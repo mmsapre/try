@@ -1,0 +1,347 @@
+import javax.sql.DataSource;
+import java.sql.*;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.stream.Collectors;
+
+/**
+ * MultiTableScd2JdbcWriter
+ * =======================
+ *
+ * - One payload → one DB transaction
+ * - Parent tables first
+ * - Child tables get parent_sk injected
+ * - SCD2 expire + insert
+ * - Batch safe
+ */
+public class MultiTableScd2JdbcWriter {
+
+    private final DataSource dataSource;
+
+    public MultiTableScd2JdbcWriter(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+
+    /* =========================================================
+       ENTRY POINT
+       ========================================================= */
+
+    public void write(Mapping mapping, ExecutionContext ctx) throws Exception {
+
+        try (Connection conn = dataSource.getConnection()) {
+            conn.setAutoCommit(false);
+
+            try {
+                ParentKeyStore parentKeys = new ParentKeyStore();
+
+                for (TableJdbcMapping table : orderTables(mapping.getJdbcTables())) {
+
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> rows =
+                            (List<Map<String, Object>>) ctx.get("tableRows::" + table.getAlias());
+
+                    if (rows == null || rows.isEmpty()) {
+                        continue;
+                    }
+
+                    if (table.getParentAlias() != null) {
+                        injectParentSk(table, rows, parentKeys);
+                    }
+
+                    if (table.isScd()) {
+                        processScd2Table(conn, table, rows, parentKeys);
+                    } else {
+                        processNonScdTable(conn, table, rows);
+                    }
+                }
+
+                conn.commit();
+
+            } catch (Exception ex) {
+                conn.rollback();
+                throw ex;
+            }
+        }
+    }
+
+    /* =========================================================
+       SCD2 LOGIC
+       ========================================================= */
+
+    private void processScd2Table(
+            Connection conn,
+            TableJdbcMapping table,
+            List<Map<String, Object>> rows,
+            ParentKeyStore parentKeys
+    ) throws Exception {
+
+        List<RowContext> rowContexts = new ArrayList<>();
+
+        for (Map<String, Object> row : rows) {
+            RowContext rc = new RowContext(row);
+            rc.businessKey = computeKey(row, table.getBusinessKeys());
+            rc.currentSk = selectCurrentSk(conn, table, row);
+            rc.changed = isChanged(conn, table, rc);
+            rowContexts.add(rc);
+        }
+
+        expireCurrentRows(conn, table, rowContexts);
+        insertNewRows(conn, table, rowContexts, parentKeys);
+    }
+
+    private Long selectCurrentSk(
+            Connection conn,
+            TableJdbcMapping table,
+            Map<String, Object> row
+    ) throws Exception {
+
+        if (table.getSelectCurrentSkSql() == null) return null;
+
+        try (PreparedStatement ps = conn.prepareStatement(table.getSelectCurrentSkSql())) {
+            bindKeys(ps, table.getBusinessKeys(), row);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    long sk = rs.getLong(1);
+                    return rs.wasNull() ? null : sk;
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean isChanged(
+            Connection conn,
+            TableJdbcMapping table,
+            RowContext rc
+    ) throws Exception {
+
+        if (rc.currentSk == null) return true;
+        if (table.getCompareSql() == null) return true;
+
+        try (PreparedStatement ps = conn.prepareStatement(table.getCompareSql())) {
+            ps.setLong(1, rc.currentSk);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return true;
+
+                int idx = 1;
+                for (String col : table.getCompareColumns()) {
+                    Object dbVal = rs.getObject(idx++);
+                    Object newVal = rc.row.get(col);
+                    if (!Objects.equals(dbVal, newVal)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private void expireCurrentRows(
+            Connection conn,
+            TableJdbcMapping table,
+            List<RowContext> rows
+    ) throws Exception {
+
+        if (table.getExpireSql() == null) return;
+
+        try (PreparedStatement ps = conn.prepareStatement(table.getExpireSql())) {
+            int batch = 0;
+
+            for (RowContext rc : rows) {
+                if (!rc.changed || rc.currentSk == null) continue;
+
+                ps.setTimestamp(1, Timestamp.valueOf(LocalDateTime.now()));
+                ps.setLong(2, rc.currentSk);
+                ps.addBatch();
+
+                if (++batch % table.getBatchSize() == 0) {
+                    ps.executeBatch();
+                }
+            }
+            ps.executeBatch();
+        }
+    }
+
+    private void insertNewRows(
+            Connection conn,
+            TableJdbcMapping table,
+            List<RowContext> rows,
+            ParentKeyStore parentKeys
+    ) throws Exception {
+
+        if (table.isReturnGeneratedSk()) {
+
+            try (PreparedStatement ps =
+                         conn.prepareStatement(table.getInsertSql())) {
+
+                for (RowContext rc : rows) {
+                    if (!rc.changed) continue;
+
+                    bindInsert(ps, table.getInsertColumns(), rc.row);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next()) {
+                            parentKeys.put(
+                                    table.getAlias(),
+                                    rc.businessKey,
+                                    rs.getLong(1)
+                            );
+                        }
+                    }
+                }
+            }
+
+        } else {
+
+            try (PreparedStatement ps =
+                         conn.prepareStatement(table.getInsertSql())) {
+
+                int batch = 0;
+                for (RowContext rc : rows) {
+                    if (!rc.changed) continue;
+
+                    bindInsert(ps, table.getInsertColumns(), rc.row);
+                    ps.addBatch();
+
+                    if (++batch % table.getBatchSize() == 0) {
+                        ps.executeBatch();
+                    }
+                }
+                ps.executeBatch();
+            }
+        }
+    }
+
+    /* =========================================================
+       NON-SCD
+       ========================================================= */
+
+    private void processNonScdTable(
+            Connection conn,
+            TableJdbcMapping table,
+            List<Map<String, Object>> rows
+    ) throws Exception {
+
+        try (PreparedStatement ps =
+                     conn.prepareStatement(table.getInsertSql())) {
+
+            int batch = 0;
+            for (Map<String, Object> row : rows) {
+                bindInsert(ps, table.getInsertColumns(), row);
+                ps.addBatch();
+
+                if (++batch % table.getBatchSize() == 0) {
+                    ps.executeBatch();
+                }
+            }
+            ps.executeBatch();
+        }
+    }
+
+    /* =========================================================
+       PARENT SK PROPAGATION
+       ========================================================= */
+
+    private void injectParentSk(
+            TableJdbcMapping table,
+            List<Map<String, Object>> rows,
+            ParentKeyStore parentKeys
+    ) {
+        for (Map<String, Object> row : rows) {
+            String parentKey =
+                    computeKey(row, table.getParentBusinessKeys());
+
+            Long parentSk =
+                    parentKeys.get(table.getParentAlias(), parentKey);
+
+            row.put(table.getChildParentSkColumn(), parentSk);
+        }
+    }
+
+    /* =========================================================
+       HELPERS
+       ========================================================= */
+
+    private void bindInsert(
+            PreparedStatement ps,
+            List<String> cols,
+            Map<String, Object> row
+    ) throws Exception {
+
+        int i = 1;
+        for (String col : cols) {
+            ps.setObject(i++, row.get(col));
+        }
+    }
+
+    private void bindKeys(
+            PreparedStatement ps,
+            List<String> keys,
+            Map<String, Object> row
+    ) throws Exception {
+
+        int i = 1;
+        for (String k : keys) {
+            ps.setObject(i++, row.get(k));
+        }
+    }
+
+    private String computeKey(Map<String, Object> row, List<String> keys) {
+        return keys.stream()
+                .map(k -> String.valueOf(row.get(k)))
+                .collect(Collectors.joining("|"));
+    }
+
+    private List<TableJdbcMapping> orderTables(List<TableJdbcMapping> tables) {
+        Map<String, TableJdbcMapping> byAlias = new HashMap<>();
+        for (var t : tables) byAlias.put(t.getAlias(), t);
+
+        List<TableJdbcMapping> ordered = new ArrayList<>();
+        Set<String> visited = new HashSet<>();
+
+        for (var t : tables) {
+            dfs(t, byAlias, visited, ordered);
+        }
+        return ordered;
+    }
+
+    private void dfs(
+            TableJdbcMapping t,
+            Map<String, TableJdbcMapping> byAlias,
+            Set<String> visited,
+            List<TableJdbcMapping> out
+    ) {
+        if (!visited.add(t.getAlias())) return;
+
+        if (t.getParentAlias() != null) {
+            dfs(byAlias.get(t.getParentAlias()), byAlias, visited, out);
+        }
+        out.add(t);
+    }
+
+    /* =========================================================
+       INTERNAL STRUCTS
+       ========================================================= */
+
+    private static class RowContext {
+        final Map<String, Object> row;
+        String businessKey;
+        Long currentSk;
+        boolean changed;
+
+        RowContext(Map<String, Object> row) {
+            this.row = row;
+        }
+    }
+
+    private static class ParentKeyStore {
+        private final Map<String, Map<String, Long>> store = new HashMap<>();
+
+        void put(String table, String key, Long sk) {
+            store.computeIfAbsent(table, k -> new HashMap<>()).put(key, sk);
+        }
+
+        Long get(String table, String key) {
+            return store.getOrDefault(table, Map.of()).get(key);
+        }
+    }
+}
