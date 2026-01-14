@@ -1,0 +1,57 @@
+import org.jeasy.batch.core.processor.RecordProcessor;
+import org.jeasy.batch.core.record.Record;
+
+import java.util.*;
+
+/**
+ * Generic Mapping Processor
+ * -------------------------
+ * - Stateless
+ * - YAML-driven
+ * - Works with RAW / SPLIT / HYBRID
+ * - Produces ExecutionContext for JDBC writer
+ */
+public class MappingEvaluationProcessor
+        implements RecordProcessor<Record<String>, Record<ExecutionContext>> {
+
+    private final GraalScriptEvaluator evaluator;
+    private final Mapping mapping;
+
+    public MappingEvaluationProcessor(
+            GraalScriptEvaluator evaluator,
+            Mapping mapping
+    ) {
+        this.evaluator = evaluator;
+        this.mapping = mapping;
+    }
+
+    @Override
+    public Record<ExecutionContext> processRecord(
+            Record<String> record
+    ) throws Exception {
+
+        String payload = record.getPayload();
+
+        ExecutionContext ctx = new ExecutionContext();
+        ctx.putGlobal("payload_id", record.getHeader().getNumber());
+
+        for (TableMapping tm : mapping.orderedTables()) {
+
+            List<Map<String, Object>> rows =
+                    evaluator.evaluate(
+                            payload,
+                            GraalScriptEvaluator.Mode.valueOf(tm.getMode()),
+                            tm.getRepeatOn(),
+                            tm.getListPath(),
+                            tm.getBindItemAs(),
+                            tm.getBindChildAs(),
+                            tm.getFieldExpressions(),
+                            ctx
+                    );
+
+            ctx.put("tableRows::" + tm.getAlias(), rows);
+        }
+
+        return record.copyWithPayload(ctx);
+    }
+}
