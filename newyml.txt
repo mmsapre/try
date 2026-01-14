@@ -1,0 +1,325 @@
+version: 1.0
+
+# =====================================================
+# SCRIPT-LEVEL MAPPING (ScriptEvaluator)
+# =====================================================
+mapping:
+
+  defaultMode: RAW
+
+  tables:
+
+    # =========================
+    # TRUST (ROOT – SCD2)
+    # =========================
+    - alias: trust
+      mode: HYBRID
+      scd: true
+
+      repeat:
+        repeatOn: trust
+        bindItemAs: item
+
+      fields:
+        - name: customer_id
+          expr: "parseRoot('customerId')"
+
+        - name: trust_id
+          expr: "parseItem('trustId')"
+
+        - name: trust_name
+          expr: "parseItem('trustName')"
+
+        - name: status
+          expr: "parseItem('status')"
+
+        - name: valid_from
+          expr: "nowTs()"
+
+        - name: valid_to
+          expr: "farFutureTs()"
+
+        - name: is_current
+          expr: "TRUE"
+
+
+    # =========================
+    # CLIENT DATA (CHILD – SCD2)
+    # =========================
+    - alias: client_data
+      mode: HYBRID
+      scd: true
+      parentAlias: trust
+
+      repeat:
+        repeatOn: trust
+        bindItemAs: item
+        objectPath: clientData
+
+      fields:
+        - name: customer_id
+          expr: "parseRoot('customerId')"
+
+        - name: trust_id
+          expr: "parseItem('trustId')"
+
+        - name: client_tier
+          expr: "parseChild('clientTier')"
+
+        - name: valid_from
+          expr: "nowTs()"
+
+        - name: valid_to
+          expr: "farFutureTs()"
+
+        - name: is_current
+          expr: "TRUE"
+
+
+    # =========================
+    # CLIENT CONTACT (GRANDCHILD – SCD2 SPLIT)
+    # =========================
+    - alias: client_contact
+      mode: SPLIT
+      scd: true
+      parentAlias: client_data
+
+      repeat:
+        repeatOn: trust
+        bindItemAs: item
+        listPath: clientData.clientContacts
+        bindChildAs: child
+
+      fields:
+        - name: customer_id
+          expr: "parseRoot('customerId')"
+
+        - name: trust_id
+          expr: "parseItem('trustId')"
+
+        - name: contact_name
+          expr: "parseChild('contactPersonName')"
+
+        - name: email
+          expr: "parseChild('emailAddress')"
+
+        - name: valid_from
+          expr: "nowTs()"
+
+        - name: valid_to
+          expr: "farFutureTs()"
+
+        - name: is_current
+          expr: "TRUE"
+
+
+    # =========================
+    # STATEMENT PROFILE ADDRESS (SCD2 SPLIT)
+    # =========================
+    - alias: statement_profile_address
+      mode: SPLIT
+      scd: true
+      parentAlias: trust
+
+      repeat:
+        repeatOn: trust
+        bindItemAs: item
+        listPath: statementProfile.mt535AddressList
+        bindChildAs: child
+
+      fields:
+        - name: customer_id
+          expr: "parseRoot('customerId')"
+
+        - name: trust_id
+          expr: "parseItem('trustId')"
+
+        - name: address_type
+          expr: "'MT535'"
+
+        - name: swift
+          expr: "parseChild('swift')"
+
+        - name: fax
+          expr: "parseChild('fax')"
+
+        - name: valid_from
+          expr: "nowTs()"
+
+        - name: valid_to
+          expr: "farFutureTs()"
+
+        - name: is_current
+          expr: "TRUE"
+
+
+# =====================================================
+# JDBC / SCD2 CONFIGURATION
+# =====================================================
+jdbc:
+
+  tables:
+
+    # =========================
+    # TRUST TABLE
+    # =========================
+    - alias: trust
+      scd: true
+
+      keyFields:
+        - name: trust_id
+          type: VARCHAR
+
+      selectCurrentSkQuery: |
+        SELECT trust_sk
+        FROM trust
+        WHERE trust_id = ?
+          AND is_current = true
+
+      compareQuery: |
+        SELECT status
+        FROM trust
+        WHERE trust_sk = ?
+
+      compareFields:
+        - status
+
+      expireQuery: |
+        UPDATE trust
+           SET valid_to = ?, is_current = false
+         WHERE trust_sk = ?
+           AND is_current = true
+
+      insertQuery: |
+        INSERT INTO trust
+        (customer_id, trust_id, trust_name, status,
+         valid_from, valid_to, is_current)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        RETURNING trust_sk
+
+      returnGeneratedSk: true
+
+      insertFields:
+        - { name: customer_id, type: INT }
+        - { name: trust_id,    type: VARCHAR }
+        - { name: trust_name,  type: VARCHAR }
+        - { name: status,      type: VARCHAR }
+        - { name: valid_from,  type: TIMESTAMP }
+        - { name: valid_to,    type: TIMESTAMP }
+        - { name: is_current,  type: BOOLEAN }
+
+
+    # =========================
+    # CLIENT DATA TABLE
+    # =========================
+    - alias: client_data
+      scd: true
+      parentAlias: trust
+
+      parentSkColumn: trust_sk
+      childParentSkColumn: trust_sk
+
+      parentBusinessKeyFields:
+        - { name: customer_id, type: INT, value: "@customer_id" }
+        - { name: trust_id,    type: VARCHAR, value: "@trust_id" }
+
+      keyFields:
+        - name: trust_id
+          type: VARCHAR
+
+      selectCurrentSkQuery: |
+        SELECT client_data_sk
+        FROM client_data
+        WHERE trust_sk = ?
+          AND is_current = true
+
+      expireQuery: |
+        UPDATE client_data
+           SET valid_to = ?, is_current = false
+         WHERE client_data_sk = ?
+           AND is_current = true
+
+      insertQuery: |
+        INSERT INTO client_data
+        (trust_sk, client_tier, valid_from, valid_to, is_current)
+        VALUES (?, ?, ?, ?, ?)
+        RETURNING client_data_sk
+
+      returnGeneratedSk: true
+
+      insertFields:
+        - { name: trust_sk,    type: BIGINT }
+        - { name: client_tier,type: INT }
+        - { name: valid_from, type: TIMESTAMP }
+        - { name: valid_to,   type: TIMESTAMP }
+        - { name: is_current, type: BOOLEAN }
+
+
+    # =========================
+    # CLIENT CONTACT TABLE
+    # =========================
+    - alias: client_contact
+      scd: true
+      parentAlias: client_data
+
+      parentSkColumn: client_data_sk
+      childParentSkColumn: client_data_sk
+
+      parentBusinessKeyFields:
+        - { name: customer_id, type: INT, value: "@customer_id" }
+        - { name: trust_id,    type: VARCHAR, value: "@trust_id" }
+
+      expireQuery: |
+        UPDATE client_contact
+           SET valid_to = ?, is_current = false
+         WHERE client_data_sk = ?
+           AND is_current = true
+
+      insertQuery: |
+        INSERT INTO client_contact
+        (client_data_sk, contact_name, email,
+         valid_from, valid_to, is_current)
+        VALUES (?, ?, ?, ?, ?, ?)
+
+      insertFields:
+        - { name: client_data_sk, type: BIGINT }
+        - { name: contact_name,   type: VARCHAR }
+        - { name: email,          type: VARCHAR }
+        - { name: valid_from,     type: TIMESTAMP }
+        - { name: valid_to,       type: TIMESTAMP }
+        - { name: is_current,     type: BOOLEAN }
+
+
+    # =========================
+    # STATEMENT PROFILE ADDRESS
+    # =========================
+    - alias: statement_profile_address
+      scd: true
+      parentAlias: trust
+
+      parentSkColumn: trust_sk
+      childParentSkColumn: trust_sk
+
+      parentBusinessKeyFields:
+        - { name: trust_id, type: VARCHAR, value: "@trust_id" }
+
+      expireQuery: |
+        UPDATE statement_profile_address
+           SET valid_to = ?, is_current = false
+         WHERE trust_sk = ?
+           AND is_current = true
+
+      insertQuery: |
+        INSERT INTO statement_profile_address
+        (trust_sk, address_type, swift, fax,
+         valid_from, valid_to, is_current)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+
+      insertFields:
+        - { name: trust_sk,     type: BIGINT }
+        - { name: address_type,type: VARCHAR }
+        - { name: swift,       type: VARCHAR }
+        - { name: fax,         type: VARCHAR }
+        - { name: valid_from,  type: TIMESTAMP }
+        - { name: valid_to,    type: TIMESTAMP }
+        - { name: is_current,  type: BOOLEAN }
