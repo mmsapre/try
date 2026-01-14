@@ -1,0 +1,21 @@
+Job job = new JobBuilder()
+    .named("trust-scd2-import")
+    .reader(new StringRecordReader(payloads)) // List<String>
+    .processor(new MappingEvaluationProcessor(
+            new GraalScriptEvaluator(),
+            mapping
+    ))
+    .writer(new RecordWriter<ExecutionContext>() {
+
+        MultiTableScd2JdbcWriter writer = new MultiTableScd2JdbcWriter(ds);
+
+        @Override
+        public void writeRecords(List<Record<ExecutionContext>> records)
+                throws Exception {
+
+            for (Record<ExecutionContext> r : records) {
+                writer.writePayloadRowsets(mapping, r.getPayload());
+            }
+        }
+    })
+    .build();
