@@ -1,0 +1,16 @@
+public class JdbcRootConfig {
+
+    private List<TableJdbcMapping> tables;
+
+    public List<TableJdbcMapping> getTables() {
+        return tables;
+    }
+
+    public TableJdbcMapping getByAlias(String alias) {
+        return tables.stream()
+                .filter(t -> t.getAlias().equals(alias))
+                .findFirst()
+                .orElseThrow(() ->
+                        new IllegalArgumentException("No JDBC config for alias " + alias));
+    }
+}
