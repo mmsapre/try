@@ -1,0 +1,19 @@
+public class TableMapping {
+
+    private String alias;
+    private String mode;                 // RAW | SPLIT | HYBRID
+    private String repeatOn;             // e.g. trust
+    private String listPath;             // e.g. clientData.clientContacts
+    private String bindItemAs = "item";
+    private String bindChildAs = "child";
+
+    private Map<String,String> fieldExpressions;
+
+    public String getAlias() { return alias; }
+    public String getMode() { return mode; }
+    public String getRepeatOn() { return repeatOn; }
+    public String getListPath() { return listPath; }
+    public String getBindItemAs() { return bindItemAs; }
+    public String getBindChildAs() { return bindChildAs; }
+    public Map<String,String> getFieldExpressions() { return fieldExpressions; }
+}
