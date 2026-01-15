@@ -1,0 +1,18 @@
+import java.util.List;
+
+/**
+ * JDBC configuration root.
+ * Used ONLY by MultiTableScd2JdbcWriter.
+ */
+public class JdbcRootConfig {
+
+    private List<TableJdbcMapping> tables;
+
+    public List<TableJdbcMapping> getTables() {
+        return tables;
+    }
+
+    public void setTables(List<TableJdbcMapping> tables) {
+        this.tables = tables;
+    }
+}
