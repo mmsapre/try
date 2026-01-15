@@ -1,0 +1,84 @@
+import java.util.*;
+
+/**
+ * Root mapping loaded from YAML.
+ *
+ * Contains:
+ *  - global variables
+ *  - logical table mappings (ScriptEvaluator)
+ *  - JDBC mappings (MultiTableScd2JdbcWriter)
+ */
+public class Mapping {
+
+    /* -------- ScriptEvaluator -------- */
+
+    private Map<String, String> variables = new LinkedHashMap<>();
+    private List<TableMapping> tables = new ArrayList<>();
+
+    /* -------- JDBC -------- */
+
+    private JdbcRootConfig jdbc;
+
+    /* -------- getters / setters -------- */
+
+    public Map<String, String> getVariables() {
+        return variables;
+    }
+
+    public void setVariables(Map<String, String> variables) {
+        this.variables = variables;
+    }
+
+    public List<TableMapping> getTables() {
+        return tables;
+    }
+
+    public void setTables(List<TableMapping> tables) {
+        this.tables = tables;
+    }
+
+    public JdbcRootConfig getJdbc() {
+        return jdbc;
+    }
+
+    public void setJdbc(JdbcRootConfig jdbc) {
+        this.jdbc = jdbc;
+    }
+
+    /* -------- helpers -------- */
+
+    /**
+     * Parent-first ordering for ScriptEvaluator + JDBC writer.
+     */
+    public List<TableMapping> orderedTables() {
+        Map<String, TableMapping> byAlias = new HashMap<>();
+        for (TableMapping t : tables) {
+            byAlias.put(t.getAlias(), t);
+        }
+
+        List<TableMapping> ordered = new ArrayList<>();
+        Set<String> visited = new HashSet<>();
+
+        for (TableMapping t : tables) {
+            dfs(t, byAlias, visited, ordered);
+        }
+        return ordered;
+    }
+
+    private void dfs(
+            TableMapping t,
+            Map<String, TableMapping> byAlias,
+            Set<String> visited,
+            List<TableMapping> out
+    ) {
+        if (!visited.add(t.getAlias())) return;
+
+        if (t.getParentAlias() != null) {
+            TableMapping parent = byAlias.get(t.getParentAlias());
+            if (parent != null) {
+                dfs(parent, byAlias, visited, out);
+            }
+        }
+        out.add(t);
+    }
+}
