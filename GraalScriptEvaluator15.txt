@@ -1,0 +1,198 @@
+import com.fasterxml.jackson.databind.*;
+import javax.script.*;
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.function.Function;
+import java.util.function.Supplier;
+
+/**
+ * GraalJS-based ScriptEvaluator
+ *
+ * - Evaluates ONE logical table (TableMapping)
+ * - Config-agnostic (only depends on TableMapping)
+ * - Payload can be Object or Array
+ * - Returns List<Map<String,Object>> for JDBC writer
+ */
+public class GraalScriptEvaluator {
+
+    private final ScriptEngine engine;
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    public GraalScriptEvaluator() {
+        this.engine = new ScriptEngineManager().getEngineByName("graal.js");
+        if (engine == null) {
+            throw new IllegalStateException("GraalJS ScriptEngine not found");
+        }
+    }
+
+    /* =========================================================
+       ENTRY POINT
+       ========================================================= */
+
+    public List<Map<String, Object>> evaluate(
+            String rawPayload,
+            TableMapping table,
+            ExecutionContext ctx
+    ) throws Exception {
+
+        JsonNode root = mapper.readTree(rawPayload);
+        List<JsonNode> roots = normalizeRoots(root);
+
+        TableMapping.Repeat r = table.getRepeat();
+        String mode = table.getMode();
+
+        List<Map<String, Object>> out = new ArrayList<>();
+
+        for (JsonNode item : iterateRoots(roots, r)) {
+
+            ctx.put(r.getBindItemAs(), item);
+
+            // ---------- RAW ----------
+            if ("RAW".equalsIgnoreCase(mode)) {
+                out.add(evalRow(table, ctx, item, null));
+                continue;
+            }
+
+            // Resolve objectPath (HYBRID helper)
+            JsonNode baseForChildren = resolveObjectPath(item, r.getObjectPath());
+
+            List<JsonNode> children = iterateChildren(baseForChildren, r.getListPath());
+
+            // ---------- HYBRID ----------
+            if ("HYBRID".equalsIgnoreCase(mode) && children.isEmpty()) {
+                out.add(evalRow(table, ctx, item, null));
+                continue;
+            }
+
+            // ---------- SPLIT / HYBRID ----------
+            for (JsonNode child : children) {
+                ctx.put(r.getBindChildAs(), child);
+                out.add(evalRow(table, ctx, item, child));
+            }
+        }
+
+        return out;
+    }
+
+    /* =========================================================
+       ROW EVALUATION
+       ========================================================= */
+
+    private Map<String, Object> evalRow(
+            TableMapping table,
+            ExecutionContext ctx,
+            JsonNode item,
+            JsonNode child
+    ) throws Exception {
+
+        Bindings b = createBindings(ctx, item, child);
+        Map<String, Object> row = new LinkedHashMap<>();
+
+        for (TableMapping.Field f : table.getFields()) {
+            Object v = engine.eval(f.getExpr(), b);
+            row.put(f.getName(), normalize(v));
+        }
+
+        return row;
+    }
+
+    /* =========================================================
+       BINDINGS
+       ========================================================= */
+
+    private Bindings createBindings(
+            ExecutionContext ctx,
+            JsonNode item,
+            JsonNode child
+    ) {
+
+        Bindings b = engine.createBindings();
+        JsonNode root = (JsonNode) ctx.get("rootNode");
+
+        b.put("ctx", ctx.asMap());
+
+        b.put("parseRoot", (Function<String, Object>) p -> extract(root, p));
+        b.put("parseItem", (Function<String, Object>) p -> extract(item, p));
+        b.put("parseChild", (Function<String, Object>) p -> extract(child, p));
+
+        b.put("nowTs", (Supplier<Timestamp>) () ->
+                Timestamp.valueOf(LocalDateTime.now()));
+
+        b.put("farFutureTs", (Supplier<Timestamp>) () ->
+                Timestamp.valueOf(LocalDateTime.of(2099, 12, 31, 0, 0)));
+
+        b.put("uuid", (Supplier<String>) () ->
+                UUID.randomUUID().toString());
+
+        b.put("TRUE", Boolean.TRUE);
+        b.put("FALSE", Boolean.FALSE);
+
+        return b;
+    }
+
+    /* =========================================================
+       JSON HELPERS
+       ========================================================= */
+
+    private Object extract(JsonNode node, String path) {
+        if (node == null || path == null) return null;
+
+        JsonNode v = node.at("/" + path.replace(".", "/"));
+
+        if (v.isMissingNode() || v.isNull()) return null;
+        if (v.isValueNode()) return v.asText();
+        return v;
+    }
+
+    private List<JsonNode> normalizeRoots(JsonNode root) {
+        if (root.isArray()) {
+            List<JsonNode> list = new ArrayList<>();
+            root.forEach(list::add);
+            return list;
+        }
+        return List.of(root);
+    }
+
+    private List<JsonNode> iterateRoots(
+            List<JsonNode> roots,
+            TableMapping.Repeat r
+    ) {
+        if (r == null || r.getRepeatOn() == null) {
+            return roots;
+        }
+
+        List<JsonNode> out = new ArrayList<>();
+        for (JsonNode root : roots) {
+            JsonNode arr = root.at("/" + r.getRepeatOn().replace(".", "/"));
+            if (arr.isArray()) arr.forEach(out::add);
+        }
+        return out;
+    }
+
+    private JsonNode resolveObjectPath(JsonNode item, String objectPath) {
+        if (objectPath == null || objectPath.isBlank()) {
+            return item;
+        }
+        JsonNode n = item.at("/" + objectPath.replace(".", "/"));
+        return n.isMissingNode() ? null : n;
+    }
+
+    private List<JsonNode> iterateChildren(JsonNode base, String listPath) {
+        if (base == null || listPath == null || listPath.isBlank()) {
+            return List.of();
+        }
+
+        JsonNode arr = base.at("/" + listPath.replace(".", "/"));
+        if (!arr.isArray()) return List.of();
+
+        List<JsonNode> out = new ArrayList<>();
+        arr.forEach(out::add);
+        return out;
+    }
+
+    private Object normalize(Object v) {
+        if (v instanceof Timestamp) return v;
+        return v;
+    }
+}
