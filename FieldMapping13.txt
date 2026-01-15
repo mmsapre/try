@@ -1,0 +1,21 @@
+/**
+ * Maps row map → JDBC parameter.
+ */
+public class FieldMapping {
+
+    private String name;   // DB column
+    private String type;   // VARCHAR, BIGINT, TIMESTAMP
+    private String value;  // optional row key override (@key)
+
+    public String getName() {
+        return name;
+    }
+
+    public String getType() {
+        return type;
+    }
+
+    public String getValue() {
+        return value;
+    }
+}
