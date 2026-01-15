@@ -1,0 +1,317 @@
+version: 1
+
+# ============================================================
+# 1. PAYLOAD → TABLE MAPPINGS (ScriptEvaluator)
+# ============================================================
+
+mapping:
+
+  # Optional global variables (available to all tables)
+  variables:
+    load_ts: "nowTs()"
+    far_future: "farFutureTs()"
+
+  tables:
+
+    # ========================================================
+    # TRUST (ROOT) — SCD2
+    # ========================================================
+    - alias: trust
+      mode: HYBRID
+      scd: true
+
+      repeat:
+        repeatOn: trust
+        bindItemAs: item
+
+      fields:
+        - name: customer_id
+          expr: "parseRoot('customerId')"
+
+        - name: trust_id
+          expr: "parseItem('trustId')"
+
+        - name: trust_name
+          expr: "parseItem('trustName')"
+
+        - name: status
+          expr: "parseItem('status')"
+
+        - name: valid_from
+          expr: "nowTs()"
+
+        - name: valid_to
+          expr: "null"
+
+        - name: is_current
+          expr: "TRUE"
+
+
+    # ========================================================
+    # FUND MANAGER — CHILD — SCD2
+    # ========================================================
+    - alias: fund_manager
+      mode: HYBRID
+      scd: true
+      parentAlias: trust
+
+      repeat:
+        repeatOn: trust
+        bindItemAs: item
+        objectPath: fundManager
+
+      fields:
+        - name: fund_manager_name
+          expr: "parseChild('fundManagerName')"
+
+        - name: city
+          expr: "parseChild('fundManagerCity')"
+
+        - name: country
+          expr: "parseChild('fundManagerCountry')"
+
+        - name: valid_from
+          expr: "nowTs()"
+
+        - name: valid_to
+          expr: "null"
+
+        - name: is_current
+          expr: "TRUE"
+
+
+    # ========================================================
+    # CLIENT DATA — CHILD — SCD2
+    # ========================================================
+    - alias: client_data
+      mode: HYBRID
+      scd: true
+      parentAlias: trust
+
+      repeat:
+        repeatOn: trust
+        bindItemAs: item
+        objectPath: clientData
+
+      fields:
+        - name: client_ca_class
+          expr: "parseChild('clientCaClass')"
+
+        - name: client_tier
+          expr: "parseChild('clientTier')"
+
+        - name: valid_from
+          expr: "nowTs()"
+
+        - name: valid_to
+          expr: "null"
+
+        - name: is_current
+          expr: "TRUE"
+
+
+    # ========================================================
+    # CLIENT CONTACT — GRANDCHILD — SPLIT — SCD2
+    # ========================================================
+    - alias: client_contact
+      mode: SPLIT
+      scd: true
+      parentAlias: client_data
+
+      repeat:
+        repeatOn: trust
+        bindItemAs: item
+        listPath: clientData.clientContacts
+        bindChildAs: child
+
+      fields:
+        - name: contact_name
+          expr: "parseChild('contactPersonName')"
+
+        - name: email
+          expr: "parseChild('emailAddress')"
+
+        - name: valid_from
+          expr: "nowTs()"
+
+        - name: valid_to
+          expr: "null"
+
+        - name: is_current
+          expr: "TRUE"
+
+
+    # ========================================================
+    # STATEMENT PROFILE ADDRESS — SPLIT — SCD2
+    # ========================================================
+    - alias: statement_profile_address
+      mode: SPLIT
+      scd: true
+      parentAlias: trust
+
+      repeat:
+        repeatOn: trust
+        bindItemAs: item
+        listPath: statementProfile.mt535AddressList
+        bindChildAs: child
+
+      fields:
+        - name: address_type
+          expr: "'MT535'"
+
+        - name: swift
+          expr: "parseChild('swift')"
+
+        - name: fax
+          expr: "parseChild('fax')"
+
+        - name: valid_from
+          expr: "nowTs()"
+
+        - name: valid_to
+          expr: "null"
+
+        - name: is_current
+          expr: "TRUE"
+
+
+# ============================================================
+# 2. JDBC / SCD2 CONFIGURATION
+# ============================================================
+
+jdbc:
+
+  tables:
+
+    # ========================================================
+    # TRUST TABLE
+    # ========================================================
+    - alias: trust
+      scd: true
+      returnGeneratedSk: true
+
+      businessKeys: [ customer_id, trust_id ]
+
+      selectCurrentSkSql: |
+        SELECT trust_sk
+        FROM trust
+        WHERE customer_id = ?
+          AND trust_id = ?
+          AND is_current = true
+
+      compareSql: |
+        SELECT trust_name, status
+        FROM trust
+        WHERE trust_sk = ?
+
+      compareColumns:
+        - trust_name
+        - status
+
+      expireSql: |
+        UPDATE trust
+        SET valid_to = ?, is_current = false
+        WHERE trust_sk = ?
+          AND is_current = true
+
+      insertSql: |
+        INSERT INTO trust (
+          customer_id, trust_id, trust_name, status,
+          valid_from, valid_to, is_current
+        )
+        VALUES (?,?,?,?,?,?,?)
+        RETURNING trust_sk
+
+      insertColumns:
+        - customer_id
+        - trust_id
+        - trust_name
+        - status
+        - valid_from
+        - valid_to
+        - is_current
+
+
+    # ========================================================
+    # FUND MANAGER
+    # ========================================================
+    - alias: fund_manager
+      scd: true
+      parentAlias: trust
+
+      parentBusinessKeys: [ customer_id, trust_id ]
+      childParentSkColumn: trust_sk
+
+      businessKeys: [ trust_sk, fund_manager_name ]
+
+      selectCurrentSkSql: |
+        SELECT fund_manager_sk
+        FROM fund_manager
+        WHERE trust_sk = ?
+          AND fund_manager_name = ?
+          AND is_current = true
+
+      expireSql: |
+        UPDATE fund_manager
+        SET valid_to = ?, is_current = false
+        WHERE fund_manager_sk = ?
+          AND is_current = true
+
+      insertSql: |
+        INSERT INTO fund_manager (
+          trust_sk, fund_manager_name, city, country,
+          valid_from, valid_to, is_current
+        )
+        VALUES (?,?,?,?,?,?,?)
+
+      insertColumns:
+        - trust_sk
+        - fund_manager_name
+        - city
+        - country
+        - valid_from
+        - valid_to
+        - is_current
+
+
+    # ========================================================
+    # STATEMENT PROFILE ADDRESS
+    # ========================================================
+    - alias: statement_profile_address
+      scd: true
+      parentAlias: trust
+
+      parentBusinessKeys: [ customer_id, trust_id ]
+      childParentSkColumn: trust_sk
+
+      businessKeys: [ trust_sk, address_type, swift ]
+
+      selectCurrentSkSql: |
+        SELECT address_sk
+        FROM statement_profile_address
+        WHERE trust_sk = ?
+          AND address_type = ?
+          AND swift = ?
+          AND is_current = true
+
+      expireSql: |
+        UPDATE statement_profile_address
+        SET valid_to = ?, is_current = false
+        WHERE address_sk = ?
+          AND is_current = true
+
+      insertSql: |
+        INSERT INTO statement_profile_address (
+          trust_sk, address_type, swift, fax,
+          valid_from, valid_to, is_current
+        )
+        VALUES (?,?,?,?,?,?,?)
+
+      insertColumns:
+        - trust_sk
+        - address_type
+        - swift
+        - fax
+        - valid_from
+        - valid_to
+        - is_current
