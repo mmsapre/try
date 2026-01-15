@@ -1,0 +1,125 @@
+public class GraalScriptEvaluator {
+
+    private final ScriptEngine engine =
+            new ScriptEngineManager().getEngineByName("graal.js");
+
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    public ExecutionContext evaluateAll(String rawPayload, Mapping mapping) throws Exception {
+
+        ExecutionContext ctx = new ExecutionContext();
+        JsonNode root = mapper.readTree(rawPayload);
+
+        ctx.putGlobal("rootNode", root);
+        ctx.putGlobal("raw_payload", rawPayload);
+
+        // global variables
+        if (mapping.getVariables() != null) {
+            Bindings b = bindings(ctx, null, null);
+            for (var e : mapping.getVariables().entrySet()) {
+                ctx.put(e.getKey(), engine.eval(e.getValue(), b));
+            }
+        }
+
+        for (TableMapping tm : mapping.getTables()) {
+            List<Map<String, Object>> rows =
+                    evaluateTable(rawPayload, tm, ctx);
+            ctx.put("tableRows::" + tm.getAlias(), rows);
+        }
+
+        return ctx;
+    }
+
+    private List<Map<String, Object>> evaluateTable(
+            String rawPayload,
+            TableMapping tm,
+            ExecutionContext ctx
+    ) throws Exception {
+
+        JsonNode root = (JsonNode) ctx.get("rootNode");
+        List<JsonNode> roots = root.isArray()
+                ? mapper.convertValue(root, List.class)
+                : List.of(root);
+
+        List<Map<String, Object>> out = new ArrayList<>();
+
+        for (JsonNode item : iterate(roots, tm.getRepeatOn())) {
+
+            ctx.put(tm.getBindItemAs(), item);
+
+            if (tm.getMode() == GraalScriptEvaluator.Mode.RAW) {
+                out.add(evalRow(tm, ctx, item, null));
+                continue;
+            }
+
+            for (JsonNode child : iterateChild(item, tm.getListPath())) {
+                ctx.put(tm.getBindChildAs(), child);
+                out.add(evalRow(tm, ctx, item, child));
+            }
+        }
+        return out;
+    }
+
+    private Map<String, Object> evalRow(
+            TableMapping tm,
+            ExecutionContext ctx,
+            JsonNode item,
+            JsonNode child
+    ) throws Exception {
+
+        Bindings b = bindings(ctx, item, child);
+        Map<String, Object> row = new LinkedHashMap<>();
+
+        for (var f : tm.getFields().entrySet()) {
+            row.put(f.getKey(), engine.eval(f.getValue(), b));
+        }
+        return row;
+    }
+
+    private Bindings bindings(ExecutionContext ctx, JsonNode item, JsonNode child) {
+
+        Bindings b = engine.createBindings();
+        JsonNode root = (JsonNode) ctx.get("rootNode");
+
+        b.put("ctx", ctx.asMap());
+        b.put("parseRoot", (Function<String, Object>) p -> at(root, p));
+        b.put("parseItem", (Function<String, Object>) p -> at(item, p));
+        b.put("parseChild", (Function<String, Object>) p -> at(child, p));
+
+        b.put("nowTs", (Supplier<Timestamp>) () ->
+                Timestamp.valueOf(LocalDateTime.now()));
+        b.put("farFutureTs", (Supplier<Timestamp>) () ->
+                Timestamp.valueOf(LocalDateTime.of(2099, 12, 31, 0, 0)));
+
+        b.put("TRUE", Boolean.TRUE);
+        b.put("FALSE", Boolean.FALSE);
+
+        return b;
+    }
+
+    private Object at(JsonNode n, String p) {
+        if (n == null) return null;
+        JsonNode v = n.at("/" + p.replace(".", "/"));
+        return v.isMissingNode() ? null :
+               v.isValueNode() ? v.asText() : v;
+    }
+
+    private List<JsonNode> iterate(List<JsonNode> roots, String path) {
+        if (path == null) return roots;
+        List<JsonNode> out = new ArrayList<>();
+        for (JsonNode r : roots) {
+            JsonNode arr = r.at("/" + path.replace(".", "/"));
+            if (arr.isArray()) arr.forEach(out::add);
+        }
+        return out;
+    }
+
+    private List<JsonNode> iterateChild(JsonNode item, String path) {
+        if (path == null) return List.of();
+        JsonNode arr = item.at("/" + path.replace(".", "/"));
+        if (!arr.isArray()) return List.of();
+        List<JsonNode> out = new ArrayList<>();
+        arr.forEach(out::add);
+        return out;
+    }
+}
