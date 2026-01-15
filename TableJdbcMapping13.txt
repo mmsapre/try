@@ -1,0 +1,73 @@
+import java.util.List;
+
+/**
+ * JDBC mapping for one physical table.
+ * Decoupled from ScriptEvaluator.
+ */
+public class TableJdbcMapping {
+
+    private String alias;
+    private boolean scd;
+    private String parentAlias;
+
+    /* ---- Parent SK propagation ---- */
+
+    private String parentSkColumn;
+    private String childParentSkColumn;
+    private List<FieldMapping> parentBusinessKeyFields;
+
+    /* ---- SCD2 SQL ---- */
+
+    private String selectCurrentSkQuery;
+    private String expireQuery;
+    private String insertQuery;
+    private boolean returnGeneratedSk;
+
+    /* ---- Delta detection ---- */
+
+    private String compareQuery;
+    private List<String> compareFields;
+
+    /* ---- Non-SCD ---- */
+
+    private NonScdMode nonScdMode = NonScdMode.APPEND;
+    private String deleteQuery;
+
+    /* ---- Fields ---- */
+
+    private List<FieldMapping> keyFields;
+    private List<FieldMapping> insertFields;
+
+    private int batchSize = 500;
+
+    /* ---- getters / setters ---- */
+
+    public String getAlias() { return alias; }
+    public boolean isScd() { return scd; }
+    public String getParentAlias() { return parentAlias; }
+
+    public String getParentSkColumn() { return parentSkColumn; }
+    public String getChildParentSkColumn() { return childParentSkColumn; }
+    public List<FieldMapping> getParentBusinessKeyFields() { return parentBusinessKeyFields; }
+
+    public String getSelectCurrentSkQuery() { return selectCurrentSkQuery; }
+    public String getExpireQuery() { return expireQuery; }
+    public String getInsertQuery() { return insertQuery; }
+    public boolean isReturnGeneratedSk() { return returnGeneratedSk; }
+
+    public String getCompareQuery() { return compareQuery; }
+    public List<String> getCompareFields() { return compareFields; }
+
+    public NonScdMode getNonScdMode() { return nonScdMode; }
+    public String getDeleteQuery() { return deleteQuery; }
+
+    public List<FieldMapping> getKeyFields() { return keyFields; }
+    public List<FieldMapping> getInsertFields() { return insertFields; }
+
+    public int getBatchSize() { return batchSize; }
+
+    public enum NonScdMode {
+        APPEND,
+        REPLACE
+    }
+}
