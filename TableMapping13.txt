@@ -1,0 +1,154 @@
+import java.util.*;
+
+/**
+ * Logical table mapping.
+ * Used ONLY by ScriptEvaluator.
+ */
+public class TableMapping {
+
+    private String alias;
+    private String mode = "RAW";  // RAW | SPLIT | HYBRID
+    private boolean scd;
+    private String parentAlias;
+
+    private Repeat repeat;
+    private List<Field> fields = new ArrayList<>();
+
+    /* -------- getters / setters -------- */
+
+    public String getAlias() {
+        return alias;
+    }
+
+    public void setAlias(String alias) {
+        this.alias = alias;
+    }
+
+    public String getMode() {
+        return mode == null ? "RAW" : mode;
+    }
+
+    public void setMode(String mode) {
+        this.mode = mode;
+    }
+
+    public boolean isScd() {
+        return scd;
+    }
+
+    public void setScd(boolean scd) {
+        this.scd = scd;
+    }
+
+    public String getParentAlias() {
+        return parentAlias;
+    }
+
+    public void setParentAlias(String parentAlias) {
+        this.parentAlias = parentAlias;
+    }
+
+    public Repeat getRepeat() {
+        return repeat;
+    }
+
+    public void setRepeat(Repeat repeat) {
+        this.repeat = repeat;
+    }
+
+    public List<Field> getFields() {
+        return fields;
+    }
+
+    public void setFields(List<Field> fields) {
+        this.fields = fields;
+    }
+
+    /* =====================================================
+       Inner classes
+       ===================================================== */
+
+    /**
+     * Repeat / split config.
+     */
+    public static class Repeat {
+
+        private String repeatOn;
+        private String bindItemAs = "item";
+        private String objectPath;
+        private String listPath;
+        private String bindChildAs = "child";
+
+        public String getRepeatOn() {
+            return repeatOn;
+        }
+
+        public void setRepeatOn(String repeatOn) {
+            this.repeatOn = repeatOn;
+        }
+
+        public String getBindItemAs() {
+            return bindItemAs;
+        }
+
+        public void setBindItemAs(String bindItemAs) {
+            this.bindItemAs = bindItemAs;
+        }
+
+        public String getObjectPath() {
+            return objectPath;
+        }
+
+        public void setObjectPath(String objectPath) {
+            this.objectPath = objectPath;
+        }
+
+        public String getListPath() {
+            return listPath;
+        }
+
+        public void setListPath(String listPath) {
+            this.listPath = listPath;
+        }
+
+        public String getBindChildAs() {
+            return bindChildAs;
+        }
+
+        public void setBindChildAs(String bindChildAs) {
+            this.bindChildAs = bindChildAs;
+        }
+    }
+
+    /**
+     * Column mapping.
+     */
+    public static class Field {
+
+        private String name;   // column / map key
+        private String expr;   // JS expression
+
+        public Field() {}
+
+        public Field(String name, String expr) {
+            this.name = name;
+            this.expr = expr;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public String getExpr() {
+            return expr;
+        }
+
+        public void setExpr(String expr) {
+            this.expr = expr;
+        }
+    }
+}
