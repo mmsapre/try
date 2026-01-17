@@ -1,0 +1,13 @@
+@Configuration
+public class MappingBeans {
+
+    @Bean
+    public GraalScriptEvaluator graalScriptEvaluator() {
+        return new GraalScriptEvaluator();
+    }
+
+    @Bean
+    public MultiTableScd2JdbcWriter scd2JdbcWriter(DataSource ds) {
+        return new MultiTableScd2JdbcWriter(ds);
+    }
+}
