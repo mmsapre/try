@@ -1,0 +1,9 @@
+Job job = new JobBuilder()
+    .named("customer-trust-scd-job")
+    .reader(new StringRecordReader(payloads))
+    .processor(new ScdMappingProcessor(mapping, evaluator, jdbcWriter))
+    .writer(new NoOpRecordWriter<>())
+    .build();
+
+JobExecutor executor = new JobExecutor();
+executor.execute(job);
