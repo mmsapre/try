@@ -1,0 +1,36 @@
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.Configuration;
+import java.util.*;
+
+@Configuration
+@ConfigurationProperties(prefix = "mapping")
+public class MappingConfig {
+
+    private Map<String, String> variables = new HashMap<>();
+    private List<TableMapping> tables = new ArrayList<>();
+    private JdbcConfig jdbc;
+
+    public Map<String, String> getVariables() {
+        return variables;
+    }
+
+    public void setVariables(Map<String, String> variables) {
+        this.variables = variables;
+    }
+
+    public List<TableMapping> getTables() {
+        return tables;
+    }
+
+    public void setTables(List<TableMapping> tables) {
+        this.tables = tables;
+    }
+
+    public JdbcConfig getJdbc() {
+        return jdbc;
+    }
+
+    public void setJdbc(JdbcConfig jdbc) {
+        this.jdbc = jdbc;
+    }
+}
