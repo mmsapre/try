@@ -1,0 +1,102 @@
+import okhttp3.*;
+import java.io.IOException;
+import java.util.*;
+
+public class SmartRequest {
+    private final OkHttpClient client = new OkHttpClient();
+    private final Request request;
+
+    /**
+     * Constructor that mimics Insomnia's Query/Body tabs.
+     * @param url    The endpoint URL
+     * @param method GET or POST
+     * @param data   Key-value pairs (Values can be String, Integer, or List/Array)
+     */
+    public SmartRequest(String url, String method, Map<String, Object> data) {
+        Request.Builder builder = new Request.Builder();
+        
+        if ("GET".equalsIgnoreCase(method)) {
+            // Logic for Query Parameters: ?key=val&key=val2
+            HttpUrl.Builder urlBuilder = HttpUrl.parse(url).newBuilder();
+            
+            data.forEach((key, value) -> {
+                if (value instanceof Iterable<?>) {
+                    ((Iterable<?>) value).forEach(v -> urlBuilder.addQueryParameter(key, String.valueOf(v)));
+                } else if (value != null && value.getClass().isArray()) {
+                    for (Object v : (Object[]) value) {
+                        urlBuilder.addQueryParameter(key, String.valueOf(v));
+                    }
+                } else {
+                    urlBuilder.addQueryParameter(key, String.valueOf(value));
+                }
+            });
+            this.request = builder.url(urlBuilder.build()).get().build();
+
+        } else if ("POST".equalsIgnoreCase(method)) {
+            // Logic for JSON Body: {"key": ["val1", "val2"]}
+            String json = mapToJson(data);
+            RequestBody body = RequestBody.create(json, MediaType.parse("application/json; charset=utf-8"));
+            this.request = builder.url(url).post(body).build();
+            
+        } else {
+            throw new IllegalArgumentException("Method not supported: " + method);
+        }
+    }
+
+    public String execute() throws IOException {
+        try (Response response = client.newCall(this.request).execute()) {
+            if (!response.isSuccessful()) return "Error: " + response.code();
+            return response.body() != null ? response.body().string() : "Empty Response";
+        }
+    }
+
+    /**
+     * Converts the Map to a JSON string including Array support
+     */
+    private String mapToJson(Map<String, Object> map) {
+        StringBuilder sb = new StringBuilder("{");
+        Iterator<Map.Entry<String, Object>> it = map.entrySet().iterator();
+        
+        while (it.hasNext()) {
+            Map.Entry<String, Object> entry = it.next();
+            sb.append("\"").append(entry.getKey()).append("\":");
+            
+            Object v = entry.getValue();
+            if (v instanceof Iterable<?> || (v != null && v.getClass().isArray())) {
+                sb.append("[");
+                List<Object> list = v instanceof Iterable<?> ? 
+                                    toList((Iterable<?>) v) : Arrays.asList((Object[]) v);
+                for (int i = 0; i < list.size(); i++) {
+                    sb.append("\"").append(list.get(i)).append("\"");
+                    if (i < list.size() - 1) sb.append(",");
+                }
+                sb.append("]");
+            } else {
+                sb.append("\"").append(v).append("\"");
+            }
+            if (it.hasNext()) sb.append(",");
+        }
+        return sb.append("}").toString();
+    }
+
+    private List<Object> toList(Iterable<?> iterable) {
+        List<Object> list = new ArrayList<>();
+        iterable.forEach(list::add);
+        return list;
+    }
+
+    // Testing the implementation
+    public static void main(String[] args) throws IOException {
+        Map<String, Object> myData = new HashMap<>();
+        myData.put("user", "developer");
+        myData.put("tags", List.of("java", "okhttp", "rest"));
+
+        // Example GET
+        SmartRequest getReq = new SmartRequest("https://httpbin.org/get", "GET", myData);
+        System.out.println("GET Response:\n" + getReq.execute());
+
+        // Example POST
+        SmartRequest postReq = new SmartRequest("https://httpbin.org/post", "POST", myData);
+        System.out.println("POST Response:\n" + postReq.execute());
+    }
+}
