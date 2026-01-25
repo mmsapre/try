@@ -1,0 +1,26 @@
+@Repository
+public class BulkPgRepository {
+
+  private final JdbcTemplate jdbc;
+  private final TransactionTemplate tx;
+  private final ObjectMapper om;
+
+  public BulkPgRepository(JdbcTemplate j, PlatformTransactionManager tm, ObjectMapper om){
+    this.jdbc=j; this.tx=new TransactionTemplate(tm); this.om=om;
+  }
+
+  public Mono<Void> writeBatch(List<ItemDetails> batch){
+    return Mono.fromRunnable(() -> tx.executeWithoutResult(s -> {
+      List<Object[]> args=new ArrayList<>();
+      for(var d:batch){
+        try{ args.add(new Object[]{d.id(),om.writeValueAsString(d.body())});}
+        catch(Exception ignored){}
+      }
+      jdbc.batchUpdate("""
+        INSERT INTO api_item_details(id,payload)
+        VALUES(?,?::jsonb)
+        ON CONFLICT(id) DO UPDATE SET payload=EXCLUDED.payload
+      """,args);
+    }));
+  }
+}
