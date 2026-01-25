@@ -1,0 +1,32 @@
+@Service
+public class IngestionService {
+
+  private final RemoteApiClient api;
+  private final StateRepo state;
+  private final ReactorBatcher batcher;
+  private final ApiProps props;
+
+  public IngestionService(RemoteApiClient a,StateRepo s,ReactorBatcher b,ApiProps p){
+    api=a; state=s; batcher=b; props=p;
+  }
+
+  public Mono<Void> runOnce(String upd){
+    Duration cooldown=Duration.ofMinutes(5);
+
+    return api.fetchPage(upd,0)
+      .flatMapMany(first -> {
+        int pages=(int)Math.ceil((double)first.total()/props.pageSize);
+        return Flux.range(0,pages)
+          .flatMap(i -> api.fetchPage(upd,i*props.pageSize),3);
+      })
+      .flatMap(page -> Flux.fromIterable(page.items()))
+      .flatMap(it -> state.claimIfEligible(it.id(),props.maxAttempts)
+          .filter(Boolean::booleanValue).map(ok->it))
+      .flatMap(it -> api.fetchDetails(it.id())
+          .doOnNext(batcher::accept)
+          .flatMap(d -> state.markSuccess(it.id()).thenReturn(d))
+          .onErrorResume(e -> state.markFailed(it.id(),e.toString(),cooldown).then(Mono.empty())),
+        props.detailConcurrency)
+      .then();
+  }
+}
