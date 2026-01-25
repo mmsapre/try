@@ -1,0 +1,8 @@
+@ConfigurationProperties(prefix = "api")
+public class ApiProps {
+  public String baseUrl;
+  public int pageSize = 500;
+  public int detailConcurrency = 50;
+  public int maxAttempts = 5;
+  public int rateLimitPerSec = 100;
+}
