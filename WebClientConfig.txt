@@ -1,0 +1,32 @@
+@Configuration
+@EnableConfigurationProperties(ApiProps.class)
+public class WebClientConfig {
+
+  @Bean
+  public WebClient pooledClient(ApiProps p, AuthExchangeFilter auth) {
+
+    ConnectionProvider provider = ConnectionProvider.builder("ext-api")
+        .maxConnections(200)
+        .pendingAcquireMaxCount(5000)
+        .build();
+
+    HttpClient http = HttpClient.create(provider)
+        .responseTimeout(Duration.ofSeconds(20));
+
+    return WebClient.builder()
+        .baseUrl(p.baseUrl)
+        .clientConnector(new ReactorClientHttpConnector(http))
+        .filter(auth)   // inject token
+        .build();
+  }
+
+  @Bean
+  public RateLimiter rateLimiter(ApiProps p) {
+    var cfg = RateLimiterConfig.custom()
+        .limitForPeriod(p.rateLimitPerSec)
+        .limitRefreshPeriod(Duration.ofSeconds(1))
+        .timeoutDuration(Duration.ZERO)
+        .build();
+    return RateLimiter.of("extApi", cfg);
+  }
+}
