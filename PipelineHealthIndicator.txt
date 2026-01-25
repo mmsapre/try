@@ -1,0 +1,14 @@
+@Component
+public class PipelineHealthIndicator implements HealthIndicator {
+
+  private final MetricsSupport m;
+
+  public PipelineHealthIndicator(MetricsSupport m){this.m=m;}
+
+  @Override
+  public Health health(){
+    return Health.up()
+      .withDetail("inflight",m.inflight.get())
+      .build();
+  }
+}
