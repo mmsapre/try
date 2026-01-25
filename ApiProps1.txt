@@ -1,0 +1,63 @@
+package com.example.ingest.config;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+@ConfigurationProperties(prefix = "api")
+public class ApiProps {
+  private String baseUrl;
+  private String listPath;
+  private String detailPath;
+  private int pageSize = 500;
+  private int detailConcurrency = 50;
+
+  private RetryProps retry = new RetryProps();
+  private ProcessingProps processing = new ProcessingProps();
+  private LockProps lock = new LockProps();
+
+  public static class RetryProps {
+    private int maxAttempts = 3;
+    private long firstBackoffMs = 800;
+    private long maxBackoffMs = 10_000;
+    public int getMaxAttempts() { return maxAttempts; }
+    public void setMaxAttempts(int maxAttempts) { this.maxAttempts = maxAttempts; }
+    public long getFirstBackoffMs() { return firstBackoffMs; }
+    public void setFirstBackoffMs(long firstBackoffMs) { this.firstBackoffMs = firstBackoffMs; }
+    public long getMaxBackoffMs() { return maxBackoffMs; }
+    public void setMaxBackoffMs(long maxBackoffMs) { this.maxBackoffMs = maxBackoffMs; }
+  }
+
+  public static class ProcessingProps {
+    private int maxDbAttempts = 5;
+    private long retryCooldownSeconds = 300;
+    public int getMaxDbAttempts() { return maxDbAttempts; }
+    public void setMaxDbAttempts(int maxDbAttempts) { this.maxDbAttempts = maxDbAttempts; }
+    public long getRetryCooldownSeconds() { return retryCooldownSeconds; }
+    public void setRetryCooldownSeconds(long retryCooldownSeconds) { this.retryCooldownSeconds = retryCooldownSeconds; }
+  }
+
+  public static class LockProps {
+    private boolean enabled = true;
+    private int key = 424242;
+    public boolean isEnabled() { return enabled; }
+    public void setEnabled(boolean enabled) { this.enabled = enabled; }
+    public int getKey() { return key; }
+    public void setKey(int key) { this.key = key; }
+  }
+
+  public String getBaseUrl() { return baseUrl; }
+  public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
+  public String getListPath() { return listPath; }
+  public void setListPath(String listPath) { this.listPath = listPath; }
+  public String getDetailPath() { return detailPath; }
+  public void setDetailPath(String detailPath) { this.detailPath = detailPath; }
+  public int getPageSize() { return pageSize; }
+  public void setPageSize(int pageSize) { this.pageSize = pageSize; }
+  public int getDetailConcurrency() { return detailConcurrency; }
+  public void setDetailConcurrency(int detailConcurrency) { this.detailConcurrency = detailConcurrency; }
+  public RetryProps getRetry() { return retry; }
+  public void setRetry(RetryProps retry) { this.retry = retry; }
+  public ProcessingProps getProcessing() { return processing; }
+  public void setProcessing(ProcessingProps processing) { this.processing = processing; }
+  public LockProps getLock() { return lock; }
+  public void setLock(LockProps lock) { this.lock = lock; }
+}
