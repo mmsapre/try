@@ -1,0 +1,114 @@
+package com.example.ingest.service;
+
+import com.example.ingest.api.RemoteApiClient;
+import com.example.ingest.config.ApiProps;
+import com.example.ingest.model.Dtos.ItemDetails;
+import com.example.ingest.repo.JobRunRepo;
+import com.example.ingest.repo.LockRepo;
+import com.example.ingest.repo.StateRepo;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+
+import java.time.Duration;
+import java.util.UUID;
+
+@Service
+public class IngestionService {
+  private static final Logger log = LoggerFactory.getLogger(IngestionService.class);
+
+  private final RemoteApiClient api;
+  private final StateRepo state;
+  private final JobRunRepo runs;
+  private final LockRepo lockRepo;
+  private final ApiProps props;
+
+  public IngestionService(RemoteApiClient api, StateRepo state, JobRunRepo runs, LockRepo lockRepo, ApiProps props) {
+    this.api = api;
+    this.state = state;
+    this.runs = runs;
+    this.lockRepo = lockRepo;
+    this.props = props;
+  }
+
+  public Mono<UUID> trigger(String jobKey) {
+    UUID runId = UUID.randomUUID();
+
+    Mono<Boolean> lock =
+      props.getLock().isEnabled()
+        ? lockRepo.tryLock(props.getLock().getKey())
+        : Mono.just(true);
+
+    return runs.start(runId, jobKey)
+      .then(lock)
+      .flatMap(acquired -> {
+        if (!acquired) {
+          return runs.skipped(runId, "Another run is already in progress (advisory lock not acquired).")
+            .thenReturn(runId);
+        }
+
+        return runPipeline(jobKey)
+          .then(runs.complete(runId))
+          .onErrorResume(e -> runs.fail(runId, e.toString()))
+          .doFinally(sig -> {
+            if (props.getLock().isEnabled()) {
+              lockRepo.unlock(props.getLock().getKey()).subscribe();
+            }
+          })
+          .thenReturn(runId);
+      });
+  }
+
+  private Mono<Void> runPipeline(String jobKey) {
+    Duration cooldown = Duration.ofSeconds(props.getProcessing().getRetryCooldownSeconds());
+    int maxAttempts = props.getProcessing().getMaxDbAttempts();
+
+    return state.loadOffset(jobKey)
+      .flatMapMany(startOffset ->
+        Flux.expand(startOffset, offset ->
+          api.fetchPage(offset)
+            .flatMapMany(page -> {
+
+              // checkpoint next page (so crash resumes close to where it left off)
+              Mono<Integer> checkpointNext =
+                page.hasNext()
+                  ? state.saveOffset(jobKey, page.nextOffset()).thenReturn(page.nextOffset())
+                  : Mono.empty();
+
+              Flux<ItemDetails> detailsFlux =
+                Flux.fromIterable(page.items())
+                  // DB gate: should we process this id now?
+                  .flatMap(it ->
+                      state.shouldProcess(it.id(), maxAttempts)
+                        .filter(Boolean::booleanValue)
+                        .map(ok -> it),
+                    128
+                  )
+                  // Fan-out details with bounded concurrency
+                  .flatMap(it ->
+                      api.fetchDetails(it.id())
+                        // persist, then mark success
+                        .flatMap(d ->
+                          state.upsertDetails(d.id(), d.body())
+                            .then(state.markSuccess(d.id()))
+                            .thenReturn(d)
+                        )
+                        // on failure, mark failed + next_retry_at
+                        .onErrorResume(e ->
+                          state.markFailed(it.id(), e.toString(), cooldown).then(Mono.empty())
+                        ),
+                    props.getDetailConcurrency()
+                  );
+
+              // expand needs next offset as a signal; we emit it as the next seed.
+              return page.hasNext()
+                ? detailsFlux.concatWith(checkpointNext)
+                : detailsFlux;
+            })
+        )
+      )
+      .then();
+  }
+}
