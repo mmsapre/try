@@ -1,0 +1,29 @@
+@Component
+public class AuthExchangeFilter implements ExchangeFilterFunction {
+
+  private final TokenService tokens;
+
+  public AuthExchangeFilter(TokenService tokens) { this.tokens = tokens; }
+
+  @Override
+  public Mono<ClientResponse> filter(ClientRequest req, ExchangeFunction next) {
+    return tokens.get()
+      .flatMap(t -> next.exchange(
+        ClientRequest.from(req)
+          .header("Authorization","Bearer "+t.value())
+          .build()
+      ))
+      .flatMap(resp -> {
+        if (resp.statusCode().value() == 401) {
+          tokens.invalidate();
+          return tokens.get()
+            .flatMap(t2 -> next.exchange(
+              ClientRequest.from(req)
+                .header("Authorization","Bearer "+t2.value())
+                .build()
+            ));
+        }
+        return Mono.just(resp);
+      });
+  }
+}
