@@ -1,0 +1,22 @@
+package com.example.ingest.service;
+
+import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Sinks;
+
+import java.util.List;
+
+@Component
+public class IdBuffer {
+
+    private final Sinks.Many<String> sink =
+        Sinks.many().multicast().onBackpressureBuffer(20_000, false);
+
+    public void pushAll(List<String> ids) {
+        ids.forEach(id -> sink.tryEmitNext(id));
+    }
+
+    public Flux<String> flux() {
+        return sink.asFlux();
+    }
+}
