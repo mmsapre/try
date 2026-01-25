@@ -1,0 +1,82 @@
+package com.example.ingest.batch;
+
+import com.example.ingest.model.ItemDetails;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.jdbc.core.BatchPreparedStatementSetter;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Sinks;
+
+import jakarta.annotation.PostConstruct;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.sql.Types;
+import java.time.Duration;
+import java.util.List;
+
+@Component
+public class ReactorBatcher {
+
+    private final JdbcTemplate jdbc;
+    private final MeterRegistry metrics;
+
+    private final Sinks.Many<ItemDetails> sink =
+        Sinks.many().multicast().onBackpressureBuffer(50_000, false);
+
+    private final int batchSize = 500;
+    private final Duration flushInterval = Duration.ofSeconds(2);
+
+    public ReactorBatcher(JdbcTemplate jdbc, MeterRegistry metrics) {
+        this.jdbc = jdbc;
+        this.metrics = metrics;
+    }
+
+    @PostConstruct
+    public void init() {
+
+        Counter success = metrics.counter("ingest.db.batch.success");
+        Counter failed  = metrics.counter("ingest.db.batch.failed");
+
+        sink.asFlux()
+            .bufferTimeout(batchSize, flushInterval)
+            .filter(batch -> !batch.isEmpty())
+            .publishOn(reactor.core.scheduler.Schedulers.boundedElastic())
+            .subscribe(batch -> {
+                try {
+                    writeBatch(batch);
+                    success.increment(batch.size());
+                } catch (Exception e) {
+                    failed.increment(batch.size());
+                    throw e;
+                }
+            });
+    }
+
+    public void accept(ItemDetails item) {
+        sink.tryEmitNext(item);
+    }
+
+    private void writeBatch(List<ItemDetails> batch) {
+
+        jdbc.batchUpdate("""
+            INSERT INTO api_item_data(id, payload, created_at)
+            VALUES (?, ?::jsonb, now())
+            ON CONFLICT (id) DO NOTHING
+        """, new BatchPreparedStatementSetter() {
+
+            @Override
+            public void setValues(PreparedStatement ps, int i) throws SQLException {
+                ItemDetails d = batch.get(i);
+                ps.setString(1, d.id());
+                ps.setObject(2, d.payload(), Types.OTHER);
+            }
+
+            @Override
+            public int getBatchSize() {
+                return batch.size();
+            }
+        });
+    }
+}
