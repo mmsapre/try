@@ -1,0 +1,16 @@
+@Component
+public class ReactorBatcher {
+
+  private final Sinks.Many<ItemDetails> sink=Sinks.many().unicast().onBackpressureBuffer();
+  private final BulkPgRepository repo;
+
+  public ReactorBatcher(BulkPgRepository r){
+    this.repo=r;
+    sink.asFlux()
+      .bufferTimeout(500,Duration.ofSeconds(2))
+      .flatMap(repo::writeBatch)
+      .subscribe();
+  }
+
+  public void accept(ItemDetails d){ sink.tryEmitNext(d); }
+}
