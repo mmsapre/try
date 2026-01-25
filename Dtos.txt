@@ -1,0 +1,18 @@
+package com.example.ingest.model;
+
+import java.util.List;
+import java.util.Map;
+
+public final class Dtos {
+
+  public record Item(String id) {}
+
+  // Must match your list API JSON fields.
+  public record PageResponse(List<Item> items, int total, int offset, int limit) {
+    public boolean hasNext() { return offset + limit < total; }
+    public int nextOffset() { return offset + limit; }
+  }
+
+  // Store details as Map (or replace with a typed record).
+  public record ItemDetails(String id, Map<String, Object> body) {}
+}
