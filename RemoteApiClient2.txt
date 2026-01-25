@@ -1,0 +1,32 @@
+@Component
+public class RemoteApiClient {
+
+  private final WebClient client;
+  private final RateLimiter rl;
+
+  public RemoteApiClient(WebClient c, RateLimiter rl) {
+    this.client = c; this.rl = rl;
+  }
+
+  private <T> Mono<T> limit(Mono<T> m) {
+    return m.transformDeferred(RateLimiterOperator.of(rl));
+  }
+
+  public Mono<PageResponse> fetchPage(String upd, int offset) {
+    return limit(client.get()
+      .uri(uri -> uri.path("/items")
+        .queryParam("upd", upd)
+        .queryParam("limit", 500)
+        .queryParam("offset", offset)
+        .build())
+      .retrieve().bodyToMono(PageResponse.class))
+      .retryWhen(Retry.backoff(3,Duration.ofMillis(300)));
+  }
+
+  public Mono<ItemDetails> fetchDetails(String id) {
+    return limit(client.get().uri("/details/{id}",id)
+      .retrieve().bodyToMono(Map.class)
+      .map(m -> new ItemDetails(id,(Map<String,Object>)m)))
+      .retryWhen(Retry.backoff(3,Duration.ofMillis(300)));
+  }
+}
