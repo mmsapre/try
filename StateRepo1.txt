@@ -1,0 +1,41 @@
+@Repository
+public class StateRepo {
+
+  private final DatabaseClient db;
+
+  public StateRepo(DatabaseClient db) { this.db = db; }
+
+  public Mono<Boolean> claimIfEligible(String id, int max) {
+    return db.sql("""
+      INSERT INTO api_item_state(id,status,attempts,updated_at)
+      VALUES(:id,'PENDING',0,now())
+      ON CONFLICT DO NOTHING
+    """).bind("id",id).fetch().rowsUpdated()
+    .then(db.sql("SELECT status,attempts,next_retry_at FROM api_item_state WHERE id=:id")
+      .bind("id",id).map((r,m)-> new Object[]{
+        r.get("status",String.class),
+        r.get("attempts",Integer.class),
+        r.get("next_retry_at",LocalDateTime.class)
+      }).one())
+    .flatMap(row -> {
+      String s=(String)row[0]; Integer a=(Integer)row[1];
+      LocalDateTime n=(LocalDateTime)row[2];
+      if("SUCCESS".equals(s)) return Mono.just(false);
+      if(a!=null && a>=max) return Mono.just(false);
+      if(n!=null && n.isAfter(LocalDateTime.now())) return Mono.just(false);
+      return Mono.just(true);
+    });
+  }
+
+  public Mono<Void> markSuccess(String id){
+    return db.sql("UPDATE api_item_state SET status='SUCCESS',attempts=attempts+1 WHERE id=:id")
+      .bind("id",id).then();
+  }
+
+  public Mono<Void> markFailed(String id,String err,Duration cooldown){
+    return db.sql("""
+      UPDATE api_item_state SET status='FAILED',attempts=attempts+1,last_error=:e,
+      next_retry_at=now()+(:s||' seconds')::interval WHERE id=:id
+    """).bind("id",id).bind("e",err).bind("s",String.valueOf(cooldown.toSeconds())).then();
+  }
+}
