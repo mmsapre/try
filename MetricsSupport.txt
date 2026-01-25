@@ -1,0 +1,7 @@
+@Component
+public class MetricsSupport {
+  public final AtomicInteger inflight = new AtomicInteger();
+  public MetricsSupport(MeterRegistry reg){
+    Gauge.builder("ingest.inflight",inflight,AtomicInteger::get).register(reg);
+  }
+}
