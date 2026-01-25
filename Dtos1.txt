@@ -1,0 +1,8 @@
+public record Item(String id) {}
+
+public record PageResponse(List<Item> items, int total, int offset, int limit) {
+  public boolean hasNext() { return offset + limit < total; }
+  public int nextOffset() { return offset + limit; }
+}
+
+public record ItemDetails(String id, Map<String,Object> body) {}
