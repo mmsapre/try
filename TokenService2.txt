@@ -1,0 +1,32 @@
+@Component
+public class TokenService {
+
+  private final WebClient client;
+  private final AtomicReference<Mono<Token>> cache = new AtomicReference<>();
+
+  public TokenService(WebClient client) {
+    this.client = client;
+  }
+
+  public Mono<Token> get() {
+    Mono<Token> t = cache.get();
+    if (t != null) return t;
+
+    Mono<Token> fresh = fetch().cache();
+    cache.set(fresh);
+    return fresh;
+  }
+
+  public void invalidate() { cache.set(null); }
+
+  private Mono<Token> fetch() {
+    return client.post().uri("/auth/token")
+      .bodyValue(Map.of("user","apiuser","password","apipass"))
+      .retrieve()
+      .bodyToMono(Map.class)
+      .map(m -> new Token(
+          (String)m.get("token"),
+          Instant.now().plusSeconds(((Number)m.get("expiresIn")).intValue())
+      ));
+  }
+}
