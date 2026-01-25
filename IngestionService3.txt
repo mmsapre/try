@@ -1,0 +1,64 @@
+package com.example.ingest.service;
+
+import com.example.ingest.api.RemoteApiClient;
+import com.example.ingest.config.ApiProps;
+import com.example.ingest.repo.StateRepo;
+import com.example.ingest.batch.ReactorBatcher;
+import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
+
+import java.time.Duration;
+
+@Service
+public class IngestionService {
+
+    private final RemoteApiClient api;
+    private final IdBuffer buffer;
+    private final ReactorBatcher batcher;
+    private final StateRepo state;
+    private final ApiProps props;
+
+    public IngestionService(RemoteApiClient api,
+                            IdBuffer buffer,
+                            ReactorBatcher batcher,
+                            StateRepo state,
+                            ApiProps props) {
+        this.api = api;
+        this.buffer = buffer;
+        this.batcher = batcher;
+        this.state = state;
+        this.props = props;
+
+        // Start detail consumer once
+        buffer.flux()
+          .flatMap(id -> state.claimIfEligible(id, props.maxAttempts)
+              .filter(Boolean::booleanValue)
+              .map(ok -> id),
+            512 // DB concurrency
+          )
+          .flatMap(id ->
+              api.fetchDetails(id)
+                .doOnNext(batcher::accept)
+                .flatMap(d -> state.markSuccess(id).thenReturn(d))
+                .onErrorResume(e ->
+                    state.markFailed(id, e.toString(), Duration.ofMinutes(5))
+                        .then(Mono.empty())
+                ),
+            props.detailConcurrency // HTTP fan-out
+          )
+          .subscribe();
+    }
+
+    public Mono<Void> runOnce(String upd) {
+        return api.fetchPageRaw(upd, 0)
+          .flatMapMany(first -> {
+            int total = api.extractTotal(first);
+            int pages = (int)Math.ceil((double) total / props.pageSize);
+
+            return reactor.core.publisher.Flux.range(0, pages)
+              .flatMap(i -> api.fetchPageRaw(upd, i * props.pageSize), 3);
+          })
+          .doOnNext(page -> buffer.pushAll(api.extractIds(page)))
+          .then();
+    }
+}
