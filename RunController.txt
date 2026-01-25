@@ -1,0 +1,10 @@
+@RestController
+@RequestMapping("/ingest")
+public class RunController {
+  @Autowired IngestionService svc;
+
+  @PostMapping("/run")
+  public Mono<String> run(@RequestParam String upd){
+    return svc.runOnce(upd).thenReturn("STARTED");
+  }
+}
