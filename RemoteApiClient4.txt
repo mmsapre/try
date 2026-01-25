@@ -1,0 +1,91 @@
+package com.example.ingest.api;
+
+import com.example.ingest.config.ApiProps;
+import com.example.ingest.model.ItemDetails;
+import com.jayway.jsonpath.JsonPath;
+import com.jayway.jsonpath.PathNotFoundException;
+import io.github.resilience4j.ratelimiter.RateLimiter;
+import io.github.resilience4j.reactor.ratelimiter.operator.RateLimiterOperator;
+import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
+import reactor.util.retry.Retry;
+
+import com.fasterxml.jackson.databind.JsonNode;
+
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+@Component
+public class RemoteApiClient {
+
+    private final WebClient client;
+    private final RateLimiter rateLimiter;
+    private final ApiProps props;
+
+    public RemoteApiClient(WebClient client,
+                           RateLimiter rateLimiter,
+                           ApiProps props) {
+        this.client = client;
+        this.rateLimiter = rateLimiter;
+        this.props = props;
+    }
+
+    private <T> Mono<T> rateLimit(Mono<T> mono) {
+        return mono.transformDeferred(RateLimiterOperator.of(rateLimiter));
+    }
+
+    /** Fetch raw list page */
+    public Mono<JsonNode> fetchPageRaw(String upd, int offset) {
+        return rateLimit(
+            client.get()
+                .uri(uri -> uri
+                    .path("/items")
+                    .queryParam("upd", upd)
+                    .queryParam("limit", props.pageSize)
+                    .queryParam("offset", offset)
+                    .build())
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+        ).retryWhen(Retry.backoff(3, Duration.ofMillis(300)));
+    }
+
+    /** Extract IDs from raw JSON using configured JSONPath */
+    public List<String> extractIds(JsonNode pageJson) {
+        try {
+            String json = pageJson.toString();
+            Object result = JsonPath.read(json, props.listPath);
+
+            if (result == null) return List.of();
+
+            if (result instanceof List<?> list) {
+                return list.stream()
+                        .filter(v -> v != null)
+                        .map(String::valueOf)
+                        .collect(Collectors.toList());
+            }
+            return List.of(String.valueOf(result));
+
+        } catch (PathNotFoundException e) {
+            return List.of();
+        }
+    }
+
+    /** Extract total count */
+    public int extractTotal(JsonNode pageJson) {
+        return pageJson.path("totalCount").asInt();
+    }
+
+    /** Fetch full detail record by id */
+    public Mono<ItemDetails> fetchDetails(String id) {
+        return rateLimit(
+            client.get()
+                .uri("/details/{id}", id)
+                .retrieve()
+                .bodyToMono(Map.class)
+                .map(m -> new ItemDetails(id, (Map<String, Object>) m))
+        ).retryWhen(Retry.backoff(3, Duration.ofMillis(300)));
+    }
+}
