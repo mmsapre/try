@@ -1,0 +1,61 @@
+@Component
+public class RunMetrics {
+
+  private final MeterRegistry registry;
+  private final DatabaseClient db;
+
+  private volatile UUID currentRun;
+  private volatile int total, success, failed;
+
+  private Gauge totalGauge, successGauge, failedGauge;
+
+  public RunMetrics(MeterRegistry registry, DatabaseClient db) {
+    this.registry = registry;
+    this.db = db;
+
+    // load last run snapshot (if any)
+    db.sql("""
+      SELECT total, success, failed
+      FROM api_run_snapshot
+      ORDER BY finished_at DESC
+      LIMIT 1
+    """).map((r,m)-> {
+      total = r.get("total",Integer.class);
+      success = r.get("success",Integer.class);
+      failed = r.get("failed",Integer.class);
+      return 1;
+    }).first().subscribe();
+
+    totalGauge = Gauge.builder("ingest.run.total", this, r -> r.total).register(registry);
+    successGauge = Gauge.builder("ingest.run.success", this, r -> r.success).register(registry);
+    failedGauge = Gauge.builder("ingest.run.failed", this, r -> r.failed).register(registry);
+  }
+
+  public synchronized void start(UUID runId, String upd, int totalCount) {
+    currentRun = runId;
+    total = totalCount;
+    success = 0;
+    failed = 0;
+  }
+
+  public synchronized void success() { success++; }
+
+  public synchronized void failed() { failed++; }
+
+  public synchronized void finish() {
+    UUID run = currentRun;
+    if (run == null) return;
+
+    db.sql("""
+      INSERT INTO api_run_snapshot(run_id, total, success, failed, started_at, finished_at)
+      VALUES(:id, :t, :s, :f, now() - INTERVAL '1 minute', now())
+    """)
+    .bind("id", run)
+    .bind("t", total)
+    .bind("s", success)
+    .bind("f", failed)
+    .then().subscribe();
+
+    currentRun = null;
+  }
+}
