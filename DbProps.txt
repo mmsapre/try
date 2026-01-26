@@ -1,0 +1,29 @@
+package com.example.ingest.config;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+@ConfigurationProperties(prefix = "db")
+public class DbProps {
+
+  private Reactive reactive = new Reactive();
+  private Jdbc jdbc = new Jdbc();
+
+  public Reactive getReactive() { return reactive; }
+  public Jdbc getJdbc() { return jdbc; }
+
+  public static class Reactive {
+    private String url;
+    private String username;
+    private String password;
+    // getters & setters
+  }
+
+  public static class Jdbc {
+    private String url;
+    private String username;
+    private String password;
+    private int poolMax;
+    private int poolMin;
+    // getters & setters
+  }
+}
