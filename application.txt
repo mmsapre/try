@@ -1,0 +1,39 @@
+# ========= External API =========
+api.base-url=https://vendor.api.com
+api.auth-url=https://vendor.api.com/auth/token
+api.username=apiuser
+api.password=secret
+api.page-size=500
+api.rate-limit-per-sec=50
+api.detail-concurrency=100
+api.claim-concurrency=50
+api.retry-cooldown-sec=300
+api.timeout-sec=20
+
+# ========= JDBC (bulk insert) =========
+db.jdbc.url=jdbc:postgresql://localhost:5432/ingestdb
+db.jdbc.username=ingest
+db.jdbc.password=ingest
+db.jdbc.pool.max=20
+db.jdbc.pool.min=5
+
+# ========= R2DBC (state + metrics) =========
+db.reactive.url=r2dbc:postgresql://localhost:5432/ingestdb
+db.reactive.username=ingest
+db.reactive.password=ingest
+
+# ========= Buffer / batch =========
+buffer.max-size=50000
+batch.size=500
+batch.flush-seconds=2
+
+# ========= Scheduler =========
+ingest.cron=0 0 2 * * *
+
+# ========= JMS =========
+jms.broker-url=tcp://localhost:61616
+jms.queue=detail.events
+
+# ========= Actuator =========
+management.endpoints.web.exposure.include=health,info,metrics,prometheus
+management.endpoint.health.show-details=always
