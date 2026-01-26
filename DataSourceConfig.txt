@@ -1,3 +1,16 @@
+import com.zaxxer.hikari.HikariDataSource;
+import io.r2dbc.spi.ConnectionFactory;
+import io.r2dbc.spi.ConnectionFactories;
+import io.r2dbc.spi.ConnectionFactoryOptions;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.r2dbc.core.DatabaseClient;
+
+import javax.sql.DataSource;
+
+
 @Configuration
 @EnableConfigurationProperties(DbProps.class)
 public class DataSourceConfig {
