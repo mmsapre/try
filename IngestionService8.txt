@@ -1,0 +1,85 @@
+package com.example.ingest.service;
+
+import com.example.ingest.api.RemoteApiClient;
+import com.example.ingest.batch.ReactorBatcher;
+import com.example.ingest.config.ApiProps;
+import com.example.ingest.ops.RunMetrics;
+import com.example.ingest.repo.StateRepo;
+import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+
+import java.time.Duration;
+import java.util.UUID;
+
+@Service
+public class IngestionService {
+
+  private final RemoteApiClient api;
+  private final IdBuffer buffer;
+  private final ReactorBatcher batcher;
+  private final StateRepo state;
+  private final ApiProps props;
+  private final RunMetrics metrics;
+
+  public IngestionService(RemoteApiClient api,
+                          IdBuffer buffer,
+                          ReactorBatcher batcher,
+                          StateRepo state,
+                          ApiProps props,
+                          RunMetrics metrics) {
+
+    this.api = api;
+    this.buffer = buffer;
+    this.batcher = batcher;
+    this.state = state;
+    this.props = props;
+    this.metrics = metrics;
+
+    // consumer pipeline
+    buffer.flux()
+      .flatMap(id ->
+          state.claimIfEligible(id, props.maxAttempts)
+            .filter(Boolean::booleanValue)
+            .map(ok -> id),
+        props.claimConcurrency
+      )
+      .flatMap(id ->
+          api.fetchDetails(id)
+            .doOnNext(batcher::accept)
+            .flatMap(d -> state.markSuccess(id)
+                .doOnSuccess(v -> metrics.success())
+                .thenReturn(d))
+            .onErrorResume(e ->
+                state.markFailed(id, e.toString(),
+                    Duration.ofSeconds(props.retryCooldownSec))
+                  .doOnSuccess(v -> metrics.failed())
+                  .then(Mono.empty())
+            ),
+        props.detailConcurrency
+      )
+      .subscribe();
+  }
+
+  /** called by scheduler or controller */
+  public Mono<Void> runOnce(String upd) {
+
+    return api.fetchPageRaw(upd, 0)
+      .flatMapMany(first -> {
+        int total = api.extractTotal(first);
+
+        // reset metrics + state
+        return metrics.start(total)
+          .thenMany(Flux.just(first));
+      })
+      .flatMap(first -> {
+        int total = api.extractTotal(first);
+        int pages = (int)Math.ceil((double) total / props.pageSize);
+
+        return Flux.range(0, pages)
+          .flatMap(i -> api.fetchPageRaw(upd, i * props.pageSize), 3);
+      })
+      .doOnNext(p -> buffer.pushAll(api.extractIds(p)))
+      .then();
+  }
+}
