@@ -1,0 +1,24 @@
+package com.example.ingest.ops;
+
+import com.example.ingest.repo.StateRepo;
+import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Mono;
+
+import java.time.Duration;
+
+@RestController
+@RequestMapping("/ops")
+public class OpsController {
+
+  private final StateRepo state;
+
+  public OpsController(StateRepo state) {
+    this.state = state;
+  }
+
+  @PostMapping("/recover-stuck")
+  public Mono<String> recover(@RequestParam(defaultValue = "600") long seconds) {
+    return state.recoverStuck(Duration.ofSeconds(seconds))
+      .map(cnt -> "Recovered " + cnt + " stuck items");
+  }
+}
