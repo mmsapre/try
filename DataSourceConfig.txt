@@ -1,0 +1,36 @@
+@Configuration
+@EnableConfigurationProperties(DbProps.class)
+public class DataSourceConfig {
+
+  @Bean
+  public ConnectionFactory reactiveConnection(DbProps p) {
+    return ConnectionFactories.get(
+      ConnectionFactoryOptions.parse(p.getReactive().getUrl())
+        .mutate()
+        .option(ConnectionFactoryOptions.USER, p.getReactive().getUsername())
+        .option(ConnectionFactoryOptions.PASSWORD, p.getReactive().getPassword())
+        .build()
+    );
+  }
+
+  @Bean
+  public DatabaseClient databaseClient(ConnectionFactory cf) {
+    return DatabaseClient.create(cf);
+  }
+
+  @Bean
+  public DataSource jdbcDataSource(DbProps p) {
+    HikariDataSource ds = new HikariDataSource();
+    ds.setJdbcUrl(p.getJdbc().getUrl());
+    ds.setUsername(p.getJdbc().getUsername());
+    ds.setPassword(p.getJdbc().getPassword());
+    ds.setMaximumPoolSize(p.getJdbc().getPoolMax());
+    ds.setMinimumIdle(p.getJdbc().getPoolMin());
+    return ds;
+  }
+
+  @Bean
+  public JdbcTemplate jdbcTemplate(DataSource ds) {
+    return new JdbcTemplate(ds);
+  }
+}
