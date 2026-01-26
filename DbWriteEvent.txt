@@ -1,0 +1,5 @@
+package com.example.ingest.event;
+
+import java.util.UUID;
+
+public record DbWriteEvent(UUID loadRowId, long rowId, String extId) {}
