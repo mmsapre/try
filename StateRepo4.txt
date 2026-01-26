@@ -1,0 +1,89 @@
+package com.example.ingest.repo;
+
+import org.springframework.r2dbc.core.DatabaseClient;
+import org.springframework.stereotype.Repository;
+import reactor.core.publisher.Mono;
+
+import java.time.Duration;
+import java.time.LocalDateTime;
+
+@Repository
+public class StateRepo {
+
+  private final DatabaseClient db;
+
+  public StateRepo(DatabaseClient db) {
+    this.db = db;
+  }
+
+  public Mono<Boolean> claimIfEligible(String id, int maxAttempts) {
+    return db.sql("""
+      INSERT INTO api_item_state(id,status,attempts,updated_at)
+      VALUES(:id,'NEW',0,now())
+      ON CONFLICT DO NOTHING
+    """).bind("id", id).fetch().rowsUpdated()
+      .then(db.sql("""
+        SELECT status, attempts, next_retry_at, updated_at
+        FROM api_item_state WHERE id=:id
+      """).bind("id", id)
+        .map((r,m)-> new Object[]{
+          r.get("status",String.class),
+          r.get("attempts",Integer.class),
+          r.get("next_retry_at",LocalDateTime.class),
+          r.get("updated_at",LocalDateTime.class)
+        }).one())
+      .flatMap(row -> {
+        String status = (String) row[0];
+        Integer attempts = (Integer) row[1];
+        LocalDateTime retryAt = (LocalDateTime) row[2];
+        LocalDateTime updated = (LocalDateTime) row[3];
+
+        if ("SUCCESS".equals(status)) return Mono.just(false);
+        if (attempts >= maxAttempts) return Mono.just(false);
+        if (retryAt != null && retryAt.isAfter(LocalDateTime.now())) return Mono.just(false);
+        if ("IN_PROGRESS".equals(status)
+            && updated.isAfter(LocalDateTime.now().minusMinutes(10)))
+          return Mono.just(false);
+
+        return db.sql("""
+          UPDATE api_item_state SET status='IN_PROGRESS', updated_at=now()
+          WHERE id=:id
+        """).bind("id", id).fetch().rowsUpdated().map(x -> true);
+      });
+  }
+
+  public Mono<Void> markSuccess(String id) {
+    return db.sql("""
+      UPDATE api_item_state
+      SET status='SUCCESS', attempts=attempts+1,
+          last_error=NULL, next_retry_at=NULL, updated_at=now()
+      WHERE id=:id
+    """).bind("id", id).then();
+  }
+
+  public Mono<Void> markFailed(String id, String err, Duration cooldown) {
+    return db.sql("""
+      UPDATE api_item_state
+      SET status='FAILED', attempts=attempts+1,
+          last_error=:e,
+          next_retry_at = now() + (:sec || ' seconds')::interval,
+          updated_at=now()
+      WHERE id=:id
+    """)
+    .bind("id", id)
+    .bind("e", err)
+    .bind("sec", String.valueOf(cooldown.toSeconds()))
+    .then();
+  }
+
+  public Mono<Integer> recoverStuck(Duration olderThan) {
+    return db.sql("""
+      UPDATE api_item_state
+      SET status='FAILED', next_retry_at=now(), updated_at=now()
+      WHERE status='IN_PROGRESS'
+        AND updated_at < now() - (:sec || ' seconds')::interval
+    """)
+    .bind("sec", String.valueOf(olderThan.toSeconds()))
+    .fetch().rowsUpdated();
+  }
+}
