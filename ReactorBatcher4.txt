@@ -55,37 +55,39 @@ public class ReactorBatcher {
   }
 
   private Mono<Void> writeAndPublish(List<ItemDetails> batch) {
-    return Mono.fromCallable(() -> {
+  return Mono.fromCallable(() -> {
 
-      List<DbWriteEvent> ev = new ArrayList<>();
+    List<DbWriteEvent> ev = new ArrayList<>();
 
-      jdbc.execute(con -> {
-        PreparedStatement ps = con.prepareStatement("""
-          INSERT INTO api_item_data(load_rowid, ext_id, payload)
-          VALUES (?, ?, ?::jsonb)
-          ON CONFLICT (ext_id) DO NOTHING
-          RETURNING row_id, ext_id
-        """);
+    jdbc.execute((org.springframework.jdbc.core.ConnectionCallback<Void>) con -> {
 
-        for (ItemDetails d : batch) {
-          ps.setObject(1, loadRowId);
-          ps.setString(2, d.id());
-          ps.setObject(3, om.writeValueAsString(d.payload()), Types.OTHER);
+      PreparedStatement ps = con.prepareStatement("""
+        INSERT INTO api_item_data(load_rowid, ext_id, payload)
+        VALUES (?, ?, ?::jsonb)
+        ON CONFLICT (ext_id) DO NOTHING
+        RETURNING row_id, ext_id
+      """);
 
-          ResultSet rs = ps.executeQuery();
-          while (rs.next()) {
-            ev.add(new DbWriteEvent(
-                loadRowId,
-                rs.getLong(1),
-                rs.getString(2)
-            ));
-          }
+      for (ItemDetails d : batch) {
+        ps.setObject(1, loadRowId);
+        ps.setString(2, d.id());
+        ps.setObject(3, om.writeValueAsString(d.payload()), Types.OTHER);
+
+        ResultSet rs = ps.executeQuery();
+        while (rs.next()) {
+          ev.add(new DbWriteEvent(
+              loadRowId,
+              rs.getLong(1),
+              rs.getString(2)
+          ));
         }
-        return null;
-      });
-
-      ev.forEach(pub::publish);   // 🔔 JMS publish
+      }
       return null;
     });
-  }
+
+    ev.forEach(pub::publish);
+    return null;
+  });
+}
+
 }
