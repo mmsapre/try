@@ -1,0 +1,23 @@
+package com.example.ingest.api;
+
+import com.example.ingest.service.IngestionService;
+import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Mono;
+
+@RestController
+@RequestMapping("/ingest")
+public class IngestionController {
+
+  private final IngestionService service;
+
+  public IngestionController(IngestionService service) {
+    this.service = service;
+  }
+
+  /** Trigger ingestion for given upd value */
+  @PostMapping("/{upd}")
+  public Mono<String> run(@PathVariable String upd) {
+    return service.runOnce(upd)
+        .thenReturn("Ingestion started for upd=" + upd);
+  }
+}
