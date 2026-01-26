@@ -1,0 +1,45 @@
+package com.example.ingest.ops;
+
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.r2dbc.core.DatabaseClient;
+import org.springframework.stereotype.Component;
+import reactor.core.publisher.Mono;
+
+import java.util.concurrent.atomic.AtomicInteger;
+
+@Component
+public class RunMetrics {
+
+  private final AtomicInteger total = new AtomicInteger();
+  private final AtomicInteger success = new AtomicInteger();
+  private final AtomicInteger failed = new AtomicInteger();
+
+  private final DatabaseClient db;
+
+  public RunMetrics(MeterRegistry registry, DatabaseClient db) {
+    this.db = db;
+
+    Gauge.builder("ingest.run.total", total, AtomicInteger::get).register(registry);
+    Gauge.builder("ingest.run.success", success, AtomicInteger::get).register(registry);
+    Gauge.builder("ingest.run.failed", failed, AtomicInteger::get).register(registry);
+  }
+
+  /** called at the start of every schedule */
+  public Mono<Void> start(int totalCount) {
+    total.set(totalCount);
+    success.set(0);
+    failed.set(0);
+
+    // reset item state for new run
+    return db.sql("TRUNCATE TABLE api_item_state").then();
+  }
+
+  public void success() { success.incrementAndGet(); }
+
+  public void failed() { failed.incrementAndGet(); }
+
+  public void finish() {
+    // keep last values visible
+  }
+}
