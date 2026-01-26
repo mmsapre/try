@@ -1,0 +1,36 @@
+@Service
+public class IngestionService {
+
+  public IngestionService(RemoteApiClient api, IdBuffer buf,
+      ReactorBatcher batcher, StateRepo state, ApiProps props) {
+
+    buf.flux()
+      .flatMap(id -> state.claimIfEligible(id,props.maxAttempts)
+        .filter(Boolean::booleanValue).map(ok->id),
+        props.claimConcurrency)
+      .flatMap(id -> api.fetchDetails(id)
+        .doOnNext(batcher::accept)
+        .flatMap(d -> state.markSuccess(id).thenReturn(d))
+        .onErrorResume(e ->
+          state.markFailed(id,e.toString(),
+            Duration.ofSeconds(props.retryCooldownSec))
+            .then(Mono.empty())),
+        props.detailConcurrency)
+      .subscribe();
+  }
+
+  public Mono<Void> runOnce(String upd){
+    UUID load = UUID.randomUUID();
+    batcher.setLoadRowId(load);
+
+    return api.fetchPageRaw(upd,0)
+      .flatMapMany(f -> {
+        int pages=(int)Math.ceil(
+          (double)api.extractTotal(f)/props.pageSize);
+        return Flux.range(0,pages)
+          .flatMap(i -> api.fetchPageRaw(upd,i*props.pageSize),3);
+      })
+      .doOnNext(p -> buffer.pushAll(api.extractIds(p)))
+      .then();
+  }
+}
