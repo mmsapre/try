@@ -1,0 +1,44 @@
+@Component
+public class RemoteApiClient {
+
+  private final WebClient client;
+  private final RateLimiter rl;
+  private final ApiProps props;
+
+  public RemoteApiClient(WebClient c, RateLimiter rl, ApiProps p) {
+    this.client = c; this.rl = rl; this.props = p;
+  }
+
+  private <T> Mono<T> limit(Mono<T> m) {
+    return m.transformDeferred(RateLimiterOperator.of(rl));
+  }
+
+  public Mono<JsonNode> fetchPageRaw(String upd, int offset) {
+    return limit(client.get().uri(u -> u.path("/items")
+      .queryParam("upd", upd)
+      .queryParam("limit", props.pageSize)
+      .queryParam("offset", offset).build())
+      .retrieve().bodyToMono(JsonNode.class))
+      .retryWhen(Retry.backoff(3, Duration.ofMillis(300)));
+  }
+
+  public List<String> extractIds(JsonNode page) {
+    try {
+      Object r = JsonPath.read(page.toString(), props.listPath);
+      if (r instanceof List<?> l)
+        return l.stream().map(String::valueOf).toList();
+      return List.of(String.valueOf(r));
+    } catch (Exception e) { return List.of(); }
+  }
+
+  public int extractTotal(JsonNode page) {
+    return page.path("totalCount").asInt();
+  }
+
+  public Mono<ItemDetails> fetchDetails(String id) {
+    return limit(client.get().uri("/details/{id}", id)
+      .retrieve().bodyToMono(Map.class)
+      .map(m -> new ItemDetails(id,(Map<String,Object>)m)))
+      .retryWhen(Retry.backoff(3, Duration.ofMillis(300)));
+  }
+}
