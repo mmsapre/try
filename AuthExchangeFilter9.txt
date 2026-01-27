@@ -1,0 +1,25 @@
+@Component
+public class AuthExchangeFilter implements ExchangeFilterFunction {
+
+  private final TokenService tokens;
+  private final WebClient internal;
+
+  public AuthExchangeFilter(TokenService tokens,
+                            @Qualifier("internalWebClient") WebClient internal) {
+    this.tokens = tokens;
+    this.internal = internal;
+  }
+
+  @Override
+  public Mono<ClientResponse> filter(ClientRequest req, ExchangeFunction next) {
+
+    return tokens.getToken()
+      .flatMap(tok ->
+        next.exchange(
+          ClientRequest.from(req)
+            .header("Authorization", "Bearer " + tok)
+            .build()
+        )
+      );
+  }
+}
