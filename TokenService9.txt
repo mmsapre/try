@@ -1,0 +1,13 @@
+@Service
+public class TokenService {
+
+  private final WebClient auth;
+
+  public TokenService(@Qualifier("authWebClient") WebClient auth) {
+    this.auth = auth;
+  }
+
+  public Mono<String> getToken() {
+    // call /auth/token with auth client
+  }
+}
