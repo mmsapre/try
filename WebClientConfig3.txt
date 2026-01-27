@@ -1,0 +1,20 @@
+@Configuration
+public class WebClientConfig {
+
+  @Bean
+  public WebClient authWebClient(ApiProps p) {
+    return WebClient.builder()
+        .baseUrl(p.getAuthUrl())
+        .build();
+  }
+
+  @Bean
+  public WebClient apiWebClient(ApiProps p,
+                                AuthExchangeFilter authFilter) {
+
+    return WebClient.builder()
+        .baseUrl(p.getBaseUrl())
+        .filter(authFilter)
+        .build();
+  }
+}
