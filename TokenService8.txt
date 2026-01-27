@@ -1,0 +1,26 @@
+@Service
+public class TokenService {
+
+  private final WebClient authClient;
+  private volatile String token;
+  private volatile long expiresAt = 0;
+
+  public TokenService(@Qualifier("authWebClient") WebClient client) {
+    this.authClient = client;
+  }
+
+  public Mono<String> getToken() {
+    if (token != null && System.currentTimeMillis() < expiresAt)
+      return Mono.just(token);
+
+    return authClient.post()
+      .uri("/auth/token")
+      .bodyValue(Map.of("user", "...", "password", "..."))
+      .retrieve()
+      .bodyToMono(String.class)
+      .doOnNext(t -> {
+        token = t;
+        expiresAt = System.currentTimeMillis() + 86_400_000; // 24h
+      });
+  }
+}
