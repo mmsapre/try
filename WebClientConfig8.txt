@@ -1,0 +1,36 @@
+@Configuration
+public class WebClientConfig {
+
+  private HttpClient pooled(ApiProps p, String name, int max) {
+    return HttpClient.create(
+        ConnectionProvider.builder(name)
+          .maxConnections(max)
+          .pendingAcquireMaxCount(5000)
+          .build())
+      .responseTimeout(Duration.ofSeconds(p.getTimeoutSec()));
+  }
+
+  @Bean
+  public WebClient authWebClient(ApiProps p) {
+    return WebClient.builder()
+      .baseUrl(p.getAuthUrl())
+      .clientConnector(new ReactorClientHttpConnector(pooled(p,"auth",50)))
+      .build();
+  }
+
+  @Bean
+  public WebClient internalWebClient(ApiProps p) {
+    return WebClient.builder()
+      .clientConnector(new ReactorClientHttpConnector(pooled(p,"internal",50)))
+      .build();
+  }
+
+  @Bean
+  public WebClient apiWebClient(ApiProps p, AuthExchangeFilter f) {
+    return WebClient.builder()
+      .baseUrl(p.getBaseUrl())
+      .clientConnector(new ReactorClientHttpConnector(pooled(p,"api",200)))
+      .filter(f)
+      .build();
+  }
+}
