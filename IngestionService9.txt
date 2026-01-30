@@ -1,0 +1,90 @@
+package com.example.ingest.service;
+
+import com.example.ingest.api.RemoteApiClient;
+import com.example.ingest.batch.ReactorBatcher;
+import com.example.ingest.config.ApiProps;
+import com.example.ingest.ops.RunMetrics;
+import com.example.ingest.repo.StateRepo;
+import com.example.ingest.model.ItemDetails;
+import com.fasterxml.jackson.databind.JsonNode;
+import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+
+import java.time.Duration;
+import java.util.UUID;
+
+@Service
+public class IngestionService {
+
+  private final RemoteApiClient api;
+  private final IdBuffer buffer;
+  private final ReactorBatcher batcher;
+  private final StateRepo state;
+  private final ApiProps props;
+  private final RunMetrics metrics;
+
+  private volatile UUID loadRowId;
+
+  public IngestionService(RemoteApiClient api,
+                          IdBuffer buffer,
+                          ReactorBatcher batcher,
+                          StateRepo state,
+                          ApiProps props,
+                          RunMetrics metrics) {
+
+    this.api = api;
+    this.buffer = buffer;
+    this.batcher = batcher;
+    this.state = state;
+    this.props = props;
+    this.metrics = metrics;
+
+    // 🔥 CONSUMER PIPELINE
+    buffer.flux()
+      .flatMap(id ->
+          state.claimIfEligible(loadRowId, id, props.getMaxAttempts())
+            .filter(Boolean::booleanValue)
+            .map(ok -> id),
+        props.getClaimConcurrency()   // DB concurrency
+      )
+      .flatMap(id ->
+          api.fetchDetails(id)
+            .doOnNext(batcher::accept)
+            .flatMap(d ->
+                state.markSuccess(loadRowId, id)
+                  .doOnSuccess(v -> metrics.success())
+                  .thenReturn(d)
+            )
+            .onErrorResume(e ->
+                state.markFailed(
+                    loadRowId,
+                    id,
+                    e.toString(),
+                    Duration.ofSeconds(props.getRetryCooldownSec())
+                )
+                .doOnSuccess(v -> metrics.failed())
+                .then(Mono.empty())
+            ),
+        props.getDetailConcurrency()  // HTTP concurrency
+      )
+      .subscribe();
+  }
+
+  /** Triggered by scheduler or controller */
+  public Mono<Void> runOnce(String upd) {
+
+    this.loadRowId = UUID.randomUUID();
+    batcher.setLoadRowId(loadRowId);
+
+    return api.fetchAllPages(upd)
+      .flatMap(page -> {
+        int total = api.extractTotal(page);
+        return metrics.start(total).thenReturn(page);
+      })
+      .doOnNext(page ->
+          buffer.pushAll(api.extractIds(page))
+      )
+      .then();
+  }
+}
