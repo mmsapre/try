@@ -1,0 +1,25 @@
+@Repository
+public class DataRepository {
+
+  private final DatabaseClient db;
+  private final ObjectMapper om;
+
+  public DataRepository(DatabaseClient db, ObjectMapper om) {
+    this.db = db;
+    this.om = om;
+  }
+
+  public Mono<Void> insert(UUID runId, ItemDetails d) {
+    return Mono.fromCallable(() ->
+        om.writeValueAsString(d.payload())
+    ).flatMap(json ->
+      db.sql(DataSql.INSERT)
+        .bind("lr", runId)
+        .bind("id", d.id())
+        .bind("payload", json)
+        .fetch()
+        .rowsUpdated()
+        .then()
+    );
+  }
+}
