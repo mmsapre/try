@@ -1,0 +1,72 @@
+@Component
+public class RemoteApiClient {
+
+  private final WebClient client;
+  private final ApiProps props;
+  private final ObjectMapper om;
+
+  public RemoteApiClient(WebClient client, ApiProps props, ObjectMapper om) {
+    this.client = client;
+    this.props = props;
+    this.om = om;
+  }
+
+  public Mono<String> fetchPageRaw(String upd, int offset) {
+    return client.post()
+      .uri(uriBuilder -> uriBuilder
+          .path("/search")
+          .queryParam("upd", upd)
+          .queryParam("limit", props.getPageSize())
+          .queryParam("offset", offset)
+          .build()
+      )
+      .retrieve()
+      .bodyToMono(String.class)
+      .doOnNext(v -> log.info("SEARCH offset={}", offset));
+  }
+
+  // parallel paging
+  public Flux<String> fetchAllPages(String upd) {
+    return fetchPageRaw(upd, 0)
+      .flatMapMany(first -> {
+
+        int total = extractTotal(first);
+        int pages = (int)Math.ceil((double) total / props.getPageSize());
+
+        return Flux.concat(
+          Flux.just(first),
+          Flux.range(1, pages - 1)
+              .flatMap(i ->
+                  fetchPageRaw(upd, i * props.getPageSize()),
+                  5   // 🔥 search concurrency
+              )
+        );
+      });
+  }
+
+  public int extractTotal(String json) {
+    try {
+      return om.readTree(json).get("totalCount").asInt();
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  public List<String> extractIds(String json) {
+    try {
+      JsonNode items = om.readTree(json).get("items");
+      return StreamSupport.stream(items.spliterator(), false)
+          .map(n -> n.get("id").asText())
+          .toList();
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  public Mono<ItemDetails> fetchDetails(String id) {
+    return client.get()
+      .uri("/details/{id}", id)
+      .retrieve()
+      .bodyToMono(ItemDetails.class);
+  }
+}
