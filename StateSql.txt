@@ -1,0 +1,36 @@
+package com.example.ingest.sql;
+
+public final class StateSql {
+
+  private StateSql() {}
+
+  public static final String CLAIM = """
+    INSERT INTO api_item_state(load_rowid, ext_id, status, attempts, updated_at)
+    VALUES (:lr, :id, 'IN_PROGRESS', 1, now())
+    ON CONFLICT (load_rowid, ext_id)
+    DO UPDATE SET
+      attempts = api_item_state.attempts + 1,
+      status = CASE
+        WHEN api_item_state.attempts + 1 <= :max THEN 'IN_PROGRESS'
+        ELSE api_item_state.status
+      END,
+      updated_at = now()
+    RETURNING (attempts <= :max) AS claimed
+  """;
+
+  public static final String SUCCESS = """
+    UPDATE api_item_state
+       SET status='SUCCESS',
+           last_error=NULL,
+           updated_at=now()
+     WHERE load_rowid=:lr AND ext_id=:id
+  """;
+
+  public static final String FAILED = """
+    UPDATE api_item_state
+       SET status='FAILED',
+           last_error=:err,
+           updated_at=now()
+     WHERE load_rowid=:lr AND ext_id=:id
+  """;
+}
