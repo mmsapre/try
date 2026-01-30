@@ -1,0 +1,38 @@
+@Repository
+public class StateRepository {
+
+  private final DatabaseClient db;
+
+  public StateRepository(DatabaseClient db) {
+    this.db = db;
+  }
+
+  public Mono<Boolean> claim(UUID runId, String id, int maxAttempts) {
+    return db.sql(StateSql.CLAIM)
+      .bind("lr", runId)
+      .bind("id", id)
+      .bind("max", maxAttempts)
+      .map(row -> Boolean.TRUE.equals(row.get("claimed", Boolean.class)))
+      .one()
+      .defaultIfEmpty(false);
+  }
+
+  public Mono<Void> success(UUID runId, String id) {
+    return db.sql(StateSql.SUCCESS)
+      .bind("lr", runId)
+      .bind("id", id)
+      .fetch()
+      .rowsUpdated()
+      .then();
+  }
+
+  public Mono<Void> failed(UUID runId, String id, String err) {
+    return db.sql(StateSql.FAILED)
+      .bind("lr", runId)
+      .bind("id", id)
+      .bind("err", err)
+      .fetch()
+      .rowsUpdated()
+      .then();
+  }
+}
