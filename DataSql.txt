@@ -1,0 +1,12 @@
+package com.example.ingest.sql;
+
+public final class DataSql {
+
+  private DataSql() {}
+
+  public static final String INSERT = """
+    INSERT INTO api_item_data(load_rowid, ext_id, payload)
+    VALUES (:lr, :id, :payload::jsonb)
+    ON CONFLICT (load_rowid, ext_id) DO NOTHING
+  """;
+}
