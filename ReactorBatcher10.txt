@@ -1,0 +1,44 @@
+@Component
+public class ReactorBatcher {
+
+  private final JdbcTemplate jdbc;
+  private final ObjectMapper om;
+
+  private UUID runId;
+
+  public void setRunId(UUID id) {
+    this.runId = id;
+  }
+
+  private final Sinks.Many<ItemDetails> sink =
+    Sinks.many().multicast().onBackpressureBuffer(50_000);
+
+  @PostConstruct
+  void start() {
+    sink.asFlux()
+      .bufferTimeout(500, Duration.ofSeconds(2))
+      .flatMap(this::writeBatch)
+      .subscribe();
+  }
+
+  public void accept(ItemDetails d) {
+    sink.tryEmitNext(d);
+  }
+
+  private Mono<Void> writeBatch(List<ItemDetails> batch) {
+    return Mono.fromRunnable(() ->
+      jdbc.batchUpdate("""
+        INSERT INTO api_item_data(load_rowid, ext_id, payload)
+        VALUES (?,?,?::jsonb)
+        ON CONFLICT DO NOTHING
+      """, batch, batch.size(),
+      (ps, d) -> {
+        ps.setObject(1, runId);
+        ps.setString(2, d.id());
+        ps.setObject(3,
+          om.writeValueAsString(d.payload()),
+          Types.OTHER);
+      })
+    );
+  }
+}
