@@ -1,0 +1,53 @@
+@Service
+public class IngestionService {
+
+  private final RemoteApiClient api;
+  private final StateRepository state;
+  private final ReactorBatcher batcher;
+
+  private UUID runId;
+
+  public IngestionService(RemoteApiClient api,
+                          StateRepository state,
+                          ReactorBatcher batcher) {
+    this.api = api;
+    this.state = state;
+    this.batcher = batcher;
+  }
+
+  public Mono<Void> runOnce(String upd) {
+    runId = UUID.randomUUID();
+    batcher.setRunId(runId);
+
+    // 1. SEARCH → STORE ALL IDS
+    return api.fetchAllPages(upd)
+      .flatMap(page ->
+        state.insertPending(runId, api.extractIds(page))
+      )
+      .then()
+      // 2. START DETAILS CONSUMER
+      .then(consumeDetails());
+  }
+
+  private Mono<Void> consumeDetails() {
+
+    return Flux.interval(Duration.ZERO, Duration.ofMillis(100))
+      .flatMap(t ->
+        state.fetchPending(runId, 500)
+      )
+      .flatMap(id ->
+        state.claim(runId, id)
+          .filter(Boolean::booleanValue)
+          .flatMap(ok ->
+            api.fetchDetails(id)
+              .doOnNext(batcher::accept)   // write payload
+              .flatMap(d ->
+                state.success(runId, id))
+              .onErrorResume(e ->
+                state.failed(runId, id, e.toString()))
+          ),
+        300   // detail concurrency
+      )
+      .then();
+  }
+}
