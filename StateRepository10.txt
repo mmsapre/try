@@ -1,0 +1,51 @@
+@Repository
+public class StateRepository {
+
+  private final DatabaseClient db;
+
+  public StateRepository(DatabaseClient db) {
+    this.db = db;
+  }
+
+  public Mono<Void> insertPending(UUID lr, List<String> ids) {
+    return Flux.fromIterable(ids)
+      .flatMap(id ->
+        db.sql(StateSql.INSERT_PENDING)
+          .bind("lr", lr)
+          .bind("id", id)
+          .then()
+      ).then();
+  }
+
+  public Flux<String> fetchPending(UUID lr, int batch) {
+    return db.sql(StateSql.FETCH_PENDING)
+      .bind("lr", lr)
+      .bind("n", batch)
+      .map(r -> r.get("ext_id", String.class))
+      .all();
+  }
+
+  public Mono<Boolean> claim(UUID lr, String id) {
+    return db.sql(StateSql.CLAIM)
+      .bind("lr", lr)
+      .bind("id", id)
+      .map(r -> true)
+      .one()
+      .defaultIfEmpty(false);
+  }
+
+  public Mono<Void> success(UUID lr, String id) {
+    return db.sql(StateSql.SUCCESS)
+      .bind("lr", lr)
+      .bind("id", id)
+      .then();
+  }
+
+  public Mono<Void> failed(UUID lr, String id, String err) {
+    return db.sql(StateSql.FAILED)
+      .bind("lr", lr)
+      .bind("id", id)
+      .bind("err", err)
+      .then();
+  }
+}
