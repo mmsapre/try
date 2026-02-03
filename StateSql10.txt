@@ -1,0 +1,42 @@
+public final class StateSql {
+
+  public static final String INSERT_PENDING = """
+    INSERT INTO api_item_state(load_rowid, ext_id, status)
+    VALUES (:lr, :id, 'PENDING')
+    ON CONFLICT DO NOTHING
+  """;
+
+  public static final String CLAIM = """
+    UPDATE api_item_state
+       SET status='IN_PROGRESS',
+           attempts=attempts+1,
+           updated_at=now()
+     WHERE load_rowid=:lr
+       AND ext_id=:id
+       AND status='PENDING'
+     RETURNING true
+  """;
+
+  public static final String SUCCESS = """
+    UPDATE api_item_state
+       SET status='SUCCESS',
+           last_error=NULL,
+           updated_at=now()
+     WHERE load_rowid=:lr AND ext_id=:id
+  """;
+
+  public static final String FAILED = """
+    UPDATE api_item_state
+       SET status='FAILED',
+           last_error=:err,
+           updated_at=now()
+     WHERE load_rowid=:lr AND ext_id=:id
+  """;
+
+  public static final String FETCH_PENDING = """
+    SELECT ext_id FROM api_item_state
+     WHERE load_rowid=:lr
+       AND status='PENDING'
+     LIMIT :n
+  """;
+}
