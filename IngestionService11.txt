@@ -1,0 +1,75 @@
+@Service
+public class IngestionService {
+
+  private final RemoteApiClient api;
+  private final IdBuffer buffer;
+  private final ReactorBatcher batcher;
+  private final StateRepo state;
+  private final ApiProps props;
+  private final RunMetrics metrics;
+
+  private volatile UUID runId;
+
+  public IngestionService(RemoteApiClient api,
+                          IdBuffer buffer,
+                          ReactorBatcher batcher,
+                          StateRepo state,
+                          ApiProps props,
+                          RunMetrics metrics) {
+
+    this.api = api;
+    this.buffer = buffer;
+    this.batcher = batcher;
+    this.state = state;
+    this.props = props;
+    this.metrics = metrics;
+
+    // permanent workers
+    buffer.flux()
+      .flatMap(id ->
+          state.claimIfEligible(runId, id, props.getMaxAttempts())
+            .filter(Boolean::booleanValue)
+            .map(ok -> id),
+        props.getClaimConcurrency()
+      )
+      .flatMap(id ->
+          api.fetchDetails(id)
+            .doOnNext(batcher::accept)
+            .flatMap(d ->
+                state.markSuccess(runId, id)
+                  .doOnSuccess(v -> metrics.success())
+                  .thenReturn(d)
+            )
+            .onErrorResume(e ->
+                state.markFailed(runId, id, e.toString(),
+                    Duration.ofSeconds(props.getRetryCooldownSec()))
+                  .doOnSuccess(v -> metrics.failed())
+                  .then(Mono.empty())
+            ),
+        props.getDetailConcurrency()
+      )
+      .subscribe();
+  }
+
+  /** Triggered externally */
+  public Mono<Void> runOnce(String upd) {
+
+    this.runId = UUID.randomUUID();
+    batcher.setRunId(runId);
+
+    return api.fetchPageRaw(upd, 0)
+      .flatMapMany(first -> {
+        int total = api.extractTotal(first);
+
+        return metrics.start(total)
+          .thenMany(api.fetchAllPages(upd));
+      })
+      .flatMap(page ->
+          state.insertPending(runId, api.extractIds(page))
+            .doOnSuccess(v ->
+                buffer.pushAll(api.extractIds(page))
+            )
+      )
+      .then();
+  }
+}
