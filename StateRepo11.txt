@@ -1,0 +1,69 @@
+@Repository
+public class StateRepo {
+
+  private final DatabaseClient db;
+
+  public StateRepo(DatabaseClient db) {
+    this.db = db;
+  }
+
+  public Mono<Boolean> claimIfEligible(UUID runId, String id, int maxAttempts) {
+    return db.sql("""
+      UPDATE api_item_state
+      SET status='IN_PROGRESS',
+          attempts = attempts + 1,
+          updated_at = now()
+      WHERE load_rowid=:lr
+        AND ext_id=:id
+        AND status IN ('PENDING','FAILED')
+        AND attempts < :max
+      """)
+      .bind("lr", runId)
+      .bind("id", id)
+      .bind("max", maxAttempts)
+      .fetch().rowsUpdated()
+      .map(n -> n > 0);
+  }
+
+  public Mono<Void> markSuccess(UUID runId, String id) {
+    return db.sql("""
+      UPDATE api_item_state
+      SET status='SUCCESS', updated_at=now()
+      WHERE load_rowid=:lr AND ext_id=:id
+      """)
+      .bind("lr", runId)
+      .bind("id", id)
+      .then();
+  }
+
+  public Mono<Void> markFailed(UUID runId, String id,
+                               String err, Duration cooldown) {
+    return db.sql("""
+      UPDATE api_item_state
+      SET status='FAILED',
+          last_error=:err,
+          next_retry_at=now() + (:sec || ' seconds')::interval,
+          updated_at=now()
+      WHERE load_rowid=:lr AND ext_id=:id
+      """)
+      .bind("lr", runId)
+      .bind("id", id)
+      .bind("err", err)
+      .bind("sec", cooldown.getSeconds())
+      .then();
+  }
+
+  public Mono<Void> insertPending(UUID runId, List<String> ids) {
+    return Flux.fromIterable(ids)
+      .flatMap(id ->
+        db.sql("""
+          INSERT INTO api_item_state(load_rowid,ext_id,status)
+          VALUES(:lr,:id,'PENDING')
+          ON CONFLICT DO NOTHING
+        """)
+        .bind("lr", runId)
+        .bind("id", id)
+        .then()
+      ).then();
+  }
+}
