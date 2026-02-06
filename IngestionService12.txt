@@ -1,0 +1,112 @@
+package com.example.ingest.service;
+
+import com.example.ingest.api.RemoteApiClient;
+import com.example.ingest.batch.ReactorBatcher;
+import com.example.ingest.config.ApiProps;
+import com.example.ingest.ops.RunMetrics;
+import com.example.ingest.repo.StateRepo;
+import com.fasterxml.jackson.databind.JsonNode;
+import jakarta.annotation.PostConstruct;
+import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
+
+import java.time.Duration;
+import java.util.UUID;
+
+@Service
+public class IngestionService {
+
+  private final RemoteApiClient api;
+  private final IdBuffer buffer;
+  private final ReactorBatcher batcher;
+  private final StateRepo state;
+  private final ApiProps props;
+  private final RunMetrics metrics;
+
+  /** identifies one ingestion run */
+  private volatile UUID loadRowId;
+
+  public IngestionService(RemoteApiClient api,
+                          IdBuffer buffer,
+                          ReactorBatcher batcher,
+                          StateRepo state,
+                          ApiProps props,
+                          RunMetrics metrics) {
+
+    this.api = api;
+    this.buffer = buffer;
+    this.batcher = batcher;
+    this.state = state;
+    this.props = props;
+    this.metrics = metrics;
+  }
+
+  /**
+   * 🔁 PERMANENT ASYNC WORKERS
+   * Runs for the lifetime of the JVM
+   */
+  @PostConstruct
+  void startWorkers() {
+
+    buffer.flux()
+      // --- DB CLAIM (backpressure gate) ---
+      .flatMap(id ->
+          state.claimIfEligible(loadRowId, id, props.getMaxAttempts())
+            .filter(Boolean::booleanValue)
+            .map(ok -> id),
+        props.getClaimConcurrency()
+      )
+
+      // --- HTTP DETAILS + DB UPDATE ---
+      .flatMap(id ->
+          api.fetchDetails(id)
+            .doOnNext(batcher::accept)
+            .flatMap(d ->
+                state.markSuccess(loadRowId, id)
+                  .doOnSuccess(v -> metrics.success())
+                  .thenReturn(d)
+            )
+            .onErrorResume(e ->
+                state.markFailed(
+                    loadRowId,
+                    id,
+                    e.toString(),
+                    Duration.ofSeconds(props.getRetryCooldownSec())
+                )
+                .doOnSuccess(v -> metrics.failed())
+                .then(Mono.empty())
+            ),
+        props.getDetailConcurrency()
+      )
+
+      .subscribe();
+  }
+
+  /**
+   * ▶ Triggered by scheduler / controller
+   * Only ENQUEUES work
+   */
+  public Mono<Void> runOnce(String upd) {
+
+    this.loadRowId = UUID.randomUUID();
+    batcher.setLoadRowId(loadRowId);
+
+    return api.warmUpToken()   // 🔥 prevents auth starvation
+      .then(
+        api.fetchPageRaw(upd, 0)
+          .flatMapMany(first -> {
+
+            int total = api.extractTotal(first);
+
+            return metrics.start(total)
+              .thenMany(api.fetchAllPages(upd));
+          })
+          .doOnNext(page -> {
+            // persist + enqueue IDs
+            state.insertPending(loadRowId, api.extractIds(page)).subscribe();
+            buffer.pushAll(api.extractIds(page));
+          })
+          .then()
+      );
+  }
+}
