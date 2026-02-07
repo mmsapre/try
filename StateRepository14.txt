@@ -1,0 +1,77 @@
+package com.example.ingest.vertx.repo;
+
+import com.example.ingest.vertx.util.R2dbcVertxBridge;
+import io.r2dbc.pool.ConnectionPool;
+import io.r2dbc.spi.Statement;
+import io.vertx.core.Future;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+public class StateRepository {
+
+  private final ConnectionPool pool;
+
+  public StateRepository(ConnectionPool pool) {
+    this.pool = pool;
+  }
+
+  public Future<Void> insertPending(UUID runId, List<String> ids) {
+
+    return R2dbcVertxBridge.toVoid(
+      pool.create()
+        .flatMapMany(conn -> {
+          Statement st = conn.createStatement("""
+            INSERT INTO api_item_state(load_rowid, ext_id, status)
+            VALUES ($1,$2,'PENDING')
+            ON CONFLICT DO NOTHING
+          """);
+
+          ids.forEach(id ->
+            st.bind(0, runId).bind(1, id).add()
+          );
+
+          return st.execute().doFinally(s -> conn.close());
+        })
+    );
+  }
+
+  public Future<Void> markSuccess(UUID runId, String id) {
+    return R2dbcVertxBridge.toVoid(
+      pool.create()
+        .flatMapMany(c ->
+          c.createStatement("""
+            UPDATE api_item_state
+            SET status='SUCCESS', updated_at=now()
+            WHERE load_rowid=$1 AND ext_id=$2
+          """)
+          .bind(0, runId)
+          .bind(1, id)
+          .execute()
+          .doFinally(s -> c.close())
+        )
+    );
+  }
+
+  public Future<Void> markFailed(UUID runId, String id, String err) {
+    return R2dbcVertxBridge.toVoid(
+      pool.create()
+        .flatMapMany(c ->
+          c.createStatement("""
+            UPDATE api_item_state
+            SET status='FAILED',
+                attempts=attempts+1,
+                last_error=$3,
+                updated_at=now()
+            WHERE load_rowid=$1 AND ext_id=$2
+          """)
+          .bind(0, runId)
+          .bind(1, id)
+          .bind(2, err)
+          .execute()
+          .doFinally(s -> c.close())
+        )
+    );
+  }
+}
