@@ -1,0 +1,48 @@
+package com.example.ingest.vertx;
+
+import com.example.ingest.vertx.api.RemoteApiClient;
+import com.example.ingest.vertx.api.TokenService;
+import com.example.ingest.vertx.http.IngestionController;
+import com.example.ingest.vertx.repo.StateRepository;
+import com.example.ingest.vertx.service.IngestionService;
+import io.vertx.core.AbstractVerticle;
+import io.vertx.ext.web.Router;
+import io.vertx.ext.web.client.WebClient;
+import io.r2dbc.pool.ConnectionPool;
+
+public class MainVerticle extends AbstractVerticle {
+
+  @Override
+  public void start() {
+
+    WebClient webClient = WebClient.create(vertx);
+
+    TokenService tokenService = new TokenService(
+      webClient,
+      config().getString("api.auth.base-url")
+        + config().getString("api.auth.path"),
+      config().getString("api.user"),
+      config().getString("api.password")
+    );
+
+    RemoteApiClient apiClient =
+      new RemoteApiClient(vertx, webClient, tokenService, config());
+
+    ConnectionPool pool = R2dbcFactory.create(config());
+    StateRepository stateRepo = new StateRepository(pool);
+
+    IngestionService ingestionService =
+      new IngestionService(apiClient, stateRepo);
+
+    // ---- Controller
+    IngestionController controller =
+      new IngestionController(ingestionService);
+
+    Router router = Router.router(vertx);
+    controller.mount(router);
+
+    vertx.createHttpServer()
+      .requestHandler(router)
+      .listen(config().getInteger("http.port", 8080));
+  }
+}
