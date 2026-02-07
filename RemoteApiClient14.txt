@@ -1,0 +1,76 @@
+package com.example.ingest.vertx.api;
+
+import com.example.ingest.vertx.config.ApiProps;
+import com.example.ingest.vertx.util.RateGate;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.vertx.core.Future;
+import io.vertx.core.Vertx;
+import io.vertx.ext.web.client.WebClient;
+
+public class RemoteApiClient {
+
+  private final WebClient client;
+  private final TokenService tokenService;
+  private final ApiProps props;
+  private final ObjectMapper om = new ObjectMapper();
+
+  private final RateGate searchGate;
+  private final RateGate detailGate;
+  private final Vertx vertx;
+
+  public RemoteApiClient(
+      Vertx vertx,
+      WebClient client,
+      TokenService tokenService,
+      ApiProps props
+  ) {
+    this.vertx = vertx;
+    this.client = client;
+    this.tokenService = tokenService;
+    this.props = props;
+
+    this.searchGate = new RateGate(vertx, props.searchRps, props.searchConcurrency);
+    this.detailGate = new RateGate(vertx, props.detailRps, props.detailConcurrency);
+  }
+
+  /** POST body upd-range + query params */
+  public Future<JsonNode> fetchSearch(String updJson, int pageNo) {
+
+    String url = props.searchBaseUrl + props.searchPath +
+      "?limit=" + props.pageSize +
+      "&offset=" + pageNo;
+
+    return searchGate.acquire(vertx)
+      .compose(v -> tokenService.getToken())
+      .compose(jwt ->
+        client.postAbs(url)
+          .putHeader("Authorization", "Bearer " + jwt)
+          .sendBuffer(io.vertx.core.buffer.Buffer.buffer(updJson))
+      )
+      .map(resp -> {
+        searchGate.release();
+        return om.readTree(resp.bodyAsString());
+      })
+      .onFailure(e -> searchGate.release());
+  }
+
+  public Future<JsonNode> fetchDetails(String id) {
+
+    String url = props.searchBaseUrl +
+      String.format(props.detailPathTemplate, id);
+
+    return detailGate.acquire(vertx)
+      .compose(v -> tokenService.getToken())
+      .compose(jwt ->
+        client.getAbs(url)
+          .putHeader("Authorization", "Bearer " + jwt)
+          .send()
+      )
+      .map(resp -> {
+        detailGate.release();
+        return om.readTree(resp.bodyAsString());
+      })
+      .onFailure(e -> detailGate.release());
+  }
+}
