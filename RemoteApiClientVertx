@@ -1,0 +1,81 @@
+public class RemoteApiClient {
+
+  private final WebClient client;
+  private final TokenService token;
+  private final ObjectMapper om = new ObjectMapper();
+
+  private final RateGate searchGate;
+  private final RateGate detailGate;
+
+  private final String searchUrl;
+  private final String detailTemplate;
+  private final int pageSize;
+
+  public RemoteApiClient(
+      Vertx vertx,
+      WebClient client,
+      TokenService token,
+      JsonObject cfg
+  ) {
+    this.client = client;
+    this.token = token;
+
+    this.searchUrl = cfg.getString("api.search.base-url")
+        + cfg.getString("api.search.path");
+
+    this.detailTemplate =
+        cfg.getString("api.search.base-url")
+            + cfg.getString("api.detail.path-template");
+
+    this.pageSize = cfg.getInteger("api.page-size");
+
+    this.searchGate = new RateGate(
+      vertx,
+      cfg.getInteger("api.search-rps"),
+      cfg.getInteger("api.search-concurrency")
+    );
+
+    this.detailGate = new RateGate(
+      vertx,
+      cfg.getInteger("api.detail-rps"),
+      cfg.getInteger("api.detail-concurrency")
+    );
+  }
+
+  public Future<JsonNode> fetchSearch(String updJson, int pageNo) {
+
+    String url = searchUrl +
+      "?limit=" + pageSize +
+      "&offset=" + pageNo;
+
+    return searchGate.acquire()
+      .compose(permit ->
+        token.getToken()
+          .compose(jwt ->
+            client.postAbs(url)
+              .putHeader("Authorization", "Bearer " + jwt)
+              .sendBuffer(Buffer.buffer(updJson))
+          )
+          .onComplete(v -> permit.release())
+      )
+      .map(resp -> om.readTree(resp.bodyAsString()))
+      .recover(e -> Future.failedFuture(e));
+  }
+
+  public Future<JsonNode> fetchDetail(String id) {
+
+    String url = String.format(detailTemplate, id);
+
+    return detailGate.acquire()
+      .compose(permit ->
+        token.getToken()
+          .compose(jwt ->
+            client.getAbs(url)
+              .putHeader("Authorization", "Bearer " + jwt)
+              .send()
+          )
+          .onComplete(v -> permit.release())
+      )
+      .map(resp -> om.readTree(resp.bodyAsString()));
+  }
+}
