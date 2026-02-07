@@ -1,0 +1,18 @@
+@Configuration
+public class VertxConfig {
+
+  @Bean
+  public Vertx vertx() {
+    return Vertx.vertx();
+  }
+
+  @Bean
+  public ConnectionPool r2dbcPool() {
+    return R2dbcFactory.create(...);
+  }
+
+  @Bean
+  public StateRepository stateRepository(ConnectionPool pool) {
+    return new StateRepository(pool);
+  }
+}
