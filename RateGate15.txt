@@ -1,0 +1,42 @@
+public final class RateGate {
+
+  private final Vertx vertx;
+  private final int rps;
+  private final Semaphore concurrency;
+  private final AtomicInteger tokens;
+
+  public RateGate(Vertx vertx, int rps, int maxConcurrency) {
+    this.vertx = vertx;
+    this.rps = Math.max(1, rps);
+    this.concurrency = new Semaphore(Math.max(1, maxConcurrency));
+    this.tokens = new AtomicInteger(this.rps);
+
+    vertx.setPeriodic(1000, id -> tokens.set(this.rps));
+  }
+
+  public Future<Permit> acquire() {
+    Promise<Permit> p = Promise.promise();
+    tryAcquire(p);
+    return p.future();
+  }
+
+  private void tryAcquire(Promise<Permit> p) {
+    if (tokens.get() > 0 &&
+        tokens.getAndDecrement() > 0 &&
+        concurrency.tryAcquire()) {
+      p.complete(new Permit(this));
+    } else {
+      vertx.setTimer(5, t -> tryAcquire(p));
+    }
+  }
+
+  private void release() {
+    concurrency.release();
+  }
+
+  public static final class Permit {
+    private final RateGate gate;
+    private Permit(RateGate gate) { this.gate = gate; }
+    public void release() { gate.release(); }
+  }
+}
