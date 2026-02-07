@@ -1,0 +1,20 @@
+package com.example.ingest.vertx.util;
+
+import io.vertx.core.Future;
+import org.reactivestreams.Publisher;
+import reactor.core.publisher.Mono;
+
+public class R2dbcVertxBridge {
+
+  public static <T> Future<T> toFuture(Publisher<T> pub) {
+    return Future.fromCompletionStage(
+      Mono.from(pub).toFuture()
+    );
+  }
+
+  public static Future<Void> toVoid(Publisher<?> pub) {
+    return Future.fromCompletionStage(
+      Mono.from(pub).then().toFuture()
+    );
+  }
+}
