@@ -1,0 +1,36 @@
+package com.example.ingest.vertx.util;
+
+import io.vertx.core.Future;
+import io.vertx.core.Vertx;
+
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicInteger;
+
+public class RateGate {
+
+  private final AtomicInteger tokens;
+  private final Semaphore concurrency;
+
+  public RateGate(Vertx vertx, int rps, int maxConcurrency) {
+    tokens = new AtomicInteger(rps);
+    concurrency = new Semaphore(maxConcurrency);
+
+    vertx.setPeriodic(1000, t -> tokens.set(rps));
+  }
+
+  public Future<Void> acquire(Vertx vertx) {
+    return Future.future(p -> tryAcquire(p, vertx));
+  }
+
+  private void tryAcquire(io.vertx.core.Promise<Void> p, Vertx vertx) {
+    if (tokens.get() > 0 && tokens.getAndDecrement() > 0 && concurrency.tryAcquire()) {
+      p.complete();
+    } else {
+      vertx.setTimer(5, t -> tryAcquire(p, vertx));
+    }
+  }
+
+  public void release() {
+    concurrency.release();
+  }
+}
