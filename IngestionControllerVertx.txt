@@ -1,0 +1,55 @@
+package com.example.ingest.vertx.http;
+
+import com.example.ingest.vertx.service.IngestionService;
+import io.vertx.ext.web.Router;
+import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.handler.BodyHandler;
+
+import java.util.UUID;
+
+public class IngestionController {
+
+  private final IngestionService ingestionService;
+
+  public IngestionController(IngestionService ingestionService) {
+    this.ingestionService = ingestionService;
+  }
+
+  /** Register HTTP routes */
+  public void mount(Router router) {
+
+    router.post("/ingest/ingest")
+      .handler(BodyHandler.create())
+      .handler(this::startIngestion);
+  }
+
+  /** POST /ingest/ingest */
+  private void startIngestion(RoutingContext ctx) {
+
+    String body = ctx.getBodyAsString();
+
+    if (body == null || body.isBlank()) {
+      ctx.response()
+        .setStatusCode(400)
+        .end("Missing upd JSON body");
+      return;
+    }
+
+    // 🔥 generate runId
+    UUID runId = UUID.randomUUID();
+
+    // 🔥 fire-and-forget ingestion
+    ingestionService.runOnce(runId, body);
+
+    // 🔥 return immediately
+    ctx.response()
+      .setStatusCode(202)
+      .putHeader("Content-Type", "application/json")
+      .end("""
+        {
+          "status": "STARTED",
+          "runId": "%s"
+        }
+      """.formatted(runId));
+  }
+}
