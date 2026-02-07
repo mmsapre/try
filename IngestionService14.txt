@@ -1,0 +1,57 @@
+package com.example.ingest.vertx.service;
+
+import com.example.ingest.vertx.api.RemoteApiClient;
+import com.example.ingest.vertx.repo.StateRepository;
+import com.fasterxml.jackson.databind.JsonNode;
+import io.vertx.core.Vertx;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+public class IngestionService {
+
+  private final RemoteApiClient api;
+  private final StateRepository state;
+  private final Vertx vertx;
+
+  public IngestionService(RemoteApiClient api,
+                          StateRepository state,
+                          Vertx vertx) {
+    this.api = api;
+    this.state = state;
+    this.vertx = vertx;
+  }
+
+  public void runOnce(String updJson) {
+
+    UUID runId = UUID.randomUUID();
+
+    api.fetchSearch(updJson, 0).onSuccess(first -> {
+
+      int total = first.get("totalCount").asInt();
+      int pages = (int) Math.ceil(total / 500.0);
+
+      for (int page = 0; page < pages; page++) {
+        int p = page;
+
+        api.fetchSearch(updJson, p).onSuccess(pageJson -> {
+
+          List<String> ids = new ArrayList<>();
+          pageJson.get("items").forEach(n -> ids.add(n.get("id").asText()));
+
+          state.insertPending(runId, ids);
+
+          ids.forEach(id ->
+            api.fetchDetails(id)
+              .onSuccess(d -> state.markSuccess(runId, id))
+              .onFailure(e -> state.markFailed(runId, id, e.toString()))
+          );
+
+        }).onFailure(err ->
+          System.err.println("Search page failed " + p + " " + err)
+        );
+      }
+    });
+  }
+}
