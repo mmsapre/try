@@ -1,0 +1,22 @@
+package com.example.ingest.vertx.config;
+
+import io.vertx.core.Vertx;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
+
+public final class VertxHttpClientFactory {
+
+  private VertxHttpClientFactory() {}
+
+  public static WebClient create(Vertx vertx, int maxPool, int timeoutMs) {
+
+    WebClientOptions options = new WebClientOptions()
+      .setKeepAlive(true)
+      .setMaxPoolSize(maxPool)
+      .setConnectTimeout(timeoutMs)
+      .setIdleTimeout(30)
+      .setIdleTimeoutUnit(java.util.concurrent.TimeUnit.SECONDS);
+
+    return WebClient.create(vertx, options);
+  }
+}
