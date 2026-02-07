@@ -1,0 +1,43 @@
+public class TokenService {
+
+  private final WebClient client;
+  private final String authUrl;
+  private final String user;
+  private final String password;
+
+  private volatile String cached;
+  private volatile long expiresAt;
+
+  public TokenService(WebClient client,
+                      String authUrl,
+                      String user,
+                      String password) {
+    this.client = client;
+    this.authUrl = authUrl;
+    this.user = user;
+    this.password = password;
+  }
+
+  public Future<String> getToken() {
+    long now = Instant.now().getEpochSecond();
+    if (cached != null && now < expiresAt - 60) {
+      return Future.succeededFuture(cached);
+    }
+    return refresh();
+  }
+
+  private Future<String> refresh() {
+    JsonObject body = new JsonObject()
+        .put("user", user)
+        .put("password", password);
+
+    return client.postAbs(authUrl)
+      .sendJsonObject(body)
+      .map(resp -> {
+        String jwt = resp.bodyAsString();
+        cached = jwt;
+        expiresAt = Instant.now().getEpochSecond() + 86400;
+        return jwt;
+      });
+  }
+}
