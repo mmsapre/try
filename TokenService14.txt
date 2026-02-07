@@ -1,0 +1,45 @@
+package com.example.ingest.vertx.api;
+
+import com.example.ingest.vertx.config.ApiProps;
+import io.vertx.core.Future;
+import io.vertx.ext.web.client.WebClient;
+
+import java.time.Instant;
+import java.util.concurrent.atomic.AtomicReference;
+
+public class TokenService {
+
+  private final WebClient client;
+  private final ApiProps props;
+
+  private final AtomicReference<String> cached = new AtomicReference<>();
+  private volatile long expiresAt = 0;
+
+  public TokenService(WebClient client, ApiProps props) {
+    this.client = client;
+    this.props = props;
+  }
+
+  public Future<String> getToken() {
+    long now = Instant.now().getEpochSecond();
+    if (cached.get() != null && now < expiresAt - 60) {
+      return Future.succeededFuture(cached.get());
+    }
+    return refresh();
+  }
+
+  private Future<String> refresh() {
+    return client.postAbs(props.authBaseUrl + props.authPath)
+      .sendJsonObject(
+        new io.vertx.core.json.JsonObject()
+          .put("user", props.user)
+          .put("password", props.password)
+      )
+      .map(resp -> {
+        String jwt = resp.bodyAsString(); // 🔥 plain token
+        cached.set(jwt);
+        expiresAt = Instant.now().getEpochSecond() + 86400;
+        return jwt;
+      });
+  }
+}
