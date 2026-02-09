@@ -1,0 +1,40 @@
+package com.example.ingest.vertx.config;
+
+import com.example.ingest.config.ApiProps;
+import io.vertx.core.Vertx;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
+import org.springframework.stereotype.Component;
+
+import java.util.concurrent.TimeUnit;
+
+@Component
+public class VertxHttpClientFactory {
+
+  private final Vertx vertx;
+  private final ApiProps props;
+
+  public VertxHttpClientFactory(Vertx vertx, ApiProps props) {
+    this.vertx = vertx;
+    this.props = props;
+  }
+
+  public WebClient createApiClient() {
+    return WebClient.create(vertx,
+      baseOptions(props.getHttp().getMaxPoolSize()));
+  }
+
+  public WebClient createAuthClient() {
+    return WebClient.create(vertx,
+      baseOptions(20)); // auth pool smaller
+  }
+
+  private WebClientOptions baseOptions(int pool) {
+    return new WebClientOptions()
+      .setKeepAlive(true)
+      .setMaxPoolSize(pool)
+      .setConnectTimeout(props.getHttp().getConnectTimeoutMs())
+      .setIdleTimeout(30)
+      .setIdleTimeoutUnit(TimeUnit.SECONDS);
+  }
+}
