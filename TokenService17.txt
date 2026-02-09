@@ -1,0 +1,60 @@
+package com.example.ingest.vertx.api;
+
+import com.example.ingest.config.ApiProps;
+import io.vertx.core.Future;
+import io.vertx.core.json.JsonObject;
+import io.vertx.ext.web.client.WebClient;
+import org.springframework.stereotype.Component;
+
+import java.time.Instant;
+import java.util.concurrent.atomic.AtomicReference;
+
+@Component
+public class TokenService {
+
+  private final WebClient authClient;
+  private final ApiProps props;
+
+  private final AtomicReference<Token> cache = new AtomicReference<>();
+  private volatile Future<String> inflight;
+
+  public TokenService(VertxHttpClientFactory factory,
+                      ApiProps props) {
+    this.authClient = factory.createAuthClient();
+    this.props = props;
+  }
+
+  public Future<String> getToken() {
+    Token t = cache.get();
+    if (t != null && !t.expired()) {
+      return Future.succeededFuture(t.value);
+    }
+
+    synchronized (this) {
+      if (inflight != null) return inflight;
+
+      inflight = fetch()
+        .onSuccess(tok -> cache.set(tok))
+        .map(tok -> tok.value)
+        .onComplete(v -> inflight = null);
+
+      return inflight;
+    }
+  }
+
+  private Future<Token> fetch() {
+    return authClient.post(props.getAuth().getPath())
+      .sendJsonObject(new JsonObject()
+        .put("user", props.getAuth().getUser())
+        .put("password", props.getAuth().getPassword()))
+      .map(resp -> resp.bodyAsString())
+      .map(jwt ->
+        new Token(jwt,
+          Instant.now().plusSeconds(props.getAuth().getTtlSeconds() - 30))
+      );
+  }
+
+  private record Token(String value, Instant exp) {
+    boolean expired() { return Instant.now().isAfter(exp); }
+  }
+}
