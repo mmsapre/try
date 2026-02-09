@@ -1,0 +1,37 @@
+package com.example.ingest.vertx.http;
+
+import io.vertx.core.AbstractVerticle;
+import io.vertx.ext.web.Router;
+import org.springframework.stereotype.Component;
+
+@Component
+public class HttpServerVerticle extends AbstractVerticle {
+
+  private final IngestionController ingestionController;
+  private final ProgressController progressController;
+
+  public HttpServerVerticle(IngestionController ingestionController,
+                            ProgressController progressController) {
+    this.ingestionController = ingestionController;
+    this.progressController = progressController;
+  }
+
+  @Override
+  public void start() {
+
+    Router router = Router.router(vertx);
+
+    ingestionController.mount(router);
+    progressController.mount(router);
+
+    vertx.createHttpServer()
+      .requestHandler(router)
+      .listen(8080, ar -> {
+        if (ar.succeeded()) {
+          System.out.println("🚀 HTTP server started on port 8080");
+        } else {
+          ar.cause().printStackTrace();
+        }
+      });
+  }
+}
