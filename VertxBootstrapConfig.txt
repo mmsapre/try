@@ -1,0 +1,14 @@
+package com.example.ingest.vertx.config;
+
+import io.vertx.core.Vertx;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class VertxBootstrapConfig {
+
+  @Bean
+  public Vertx vertx() {
+    return Vertx.vertx();
+  }
+}
