@@ -1,0 +1,23 @@
+package com.example.ingest.vertx.config;
+
+import io.vertx.core.Vertx;
+import jakarta.annotation.PostConstruct;
+import org.springframework.stereotype.Component;
+
+@Component
+public class VerticleDeployer {
+
+  private final Vertx vertx;
+  private final HttpServerVerticle serverVerticle;
+
+  public VerticleDeployer(Vertx vertx,
+                          HttpServerVerticle serverVerticle) {
+    this.vertx = vertx;
+    this.serverVerticle = serverVerticle;
+  }
+
+  @PostConstruct
+  public void deploy() {
+    vertx.deployVerticle(serverVerticle);
+  }
+}
