@@ -1,0 +1,15 @@
+@Component
+public class RemoteApiClient {
+
+  private final WebClient apiClient;
+  private final TokenService tokenService;
+  private final ApiProps props;
+
+  public RemoteApiClient(VertxHttpClientFactory factory,
+                         TokenService tokenService,
+                         ApiProps props) {
+    this.apiClient = factory.createApiClient();
+    this.tokenService = tokenService;
+    this.props = props;
+  }
+}
