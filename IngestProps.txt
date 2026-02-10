@@ -1,0 +1,42 @@
+package com.example.ingest.vertx.config;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+
+@Component
+@ConfigurationProperties(prefix = "ingest")
+public class IngestProps {
+
+  private int pageSize = 500;
+
+  private Pump pump = new Pump();
+  private Gate search = new Gate();
+  private Gate detail = new Gate();
+
+  public static class Pump {
+    private int batch = 200;
+    private long periodMs = 5;
+    public int getBatch() { return batch; }
+    public void setBatch(int batch) { this.batch = batch; }
+    public long getPeriodMs() { return periodMs; }
+    public void setPeriodMs(long periodMs) { this.periodMs = periodMs; }
+  }
+
+  public static class Gate {
+    private int maxConcurrency = 5;
+    private long delayMs = 0;
+    public int getMaxConcurrency() { return maxConcurrency; }
+    public void setMaxConcurrency(int maxConcurrency) { this.maxConcurrency = maxConcurrency; }
+    public long getDelayMs() { return delayMs; }
+    public void setDelayMs(long delayMs) { this.delayMs = delayMs; }
+  }
+
+  public int getPageSize() { return pageSize; }
+  public void setPageSize(int pageSize) { this.pageSize = pageSize; }
+  public Pump getPump() { return pump; }
+  public void setPump(Pump pump) { this.pump = pump; }
+  public Gate getSearch() { return search; }
+  public void setSearch(Gate search) { this.search = search; }
+  public Gate getDetail() { return detail; }
+  public void setDetail(Gate detail) { this.detail = detail; }
+}
