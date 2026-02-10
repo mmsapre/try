@@ -1,0 +1,74 @@
+package com.example.ingest.vertx.service;
+
+import com.example.ingest.vertx.api.RemoteApiClient;
+import com.example.ingest.vertx.ops.IngestMetrics;
+import com.example.ingest.vertx.ops.RateGate;
+import com.example.ingest.vertx.config.IngestProps;
+import io.micrometer.core.instrument.Timer;
+import io.vertx.core.Vertx;
+import io.vertx.core.json.JsonArray;
+import io.vertx.core.json.JsonObject;
+import org.springframework.stereotype.Component;
+
+@Component
+public class SearchPaginator {
+
+  private final RemoteApiClient api;
+  private final IdQueue queue;
+  private final IngestProps props;
+  private final IngestMetrics metrics;
+
+  private final RateGate searchGate;
+
+  public SearchPaginator(RemoteApiClient api,
+                         IdQueue queue,
+                         IngestProps props,
+                         IngestMetrics metrics,
+                         Vertx vertx) {
+    this.api = api;
+    this.queue = queue;
+    this.props = props;
+    this.metrics = metrics;
+
+    this.searchGate = new RateGate(
+      vertx,
+      "search-gate",
+      props.getSearch().getMaxConcurrency(),
+      props.getSearch().getDelayMs()
+    );
+  }
+
+  public void run(JsonArray updRanges) {
+
+    int limit = props.getPageSize();
+
+    // first page to get totalCount
+    gatedSearch(updRanges, limit, 0)
+      .onSuccess(first -> {
+        int total = first.getInteger("totalCount");
+        int pages = (int) Math.ceil((double) total / limit);
+
+        for (int page = 0; page < pages; page++) {
+          int offset = page * limit;
+          gatedSearch(updRanges, limit, offset)
+            .onSuccess(resp -> {
+              JsonArray items = resp.getJsonArray("items");
+              for (int i = 0; i < items.size(); i++) {
+                queue.add(items.getJsonObject(i).getString("id"));
+              }
+            });
+        }
+      });
+  }
+
+  private io.vertx.core.Future<JsonObject> gatedSearch(JsonArray upd, int limit, int offset) {
+
+    Timer.Sample sample = metrics.startSearch();
+
+    return searchGate.acquire()
+      .compose(v -> api.fetchSearch(upd, limit, offset))
+      .onSuccess(r -> metrics.endSearchOk(sample))
+      .onFailure(e -> metrics.endSearchFail(sample))
+      .onComplete(v -> searchGate.release());
+  }
+}
