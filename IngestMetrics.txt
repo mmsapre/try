@@ -1,0 +1,79 @@
+package com.example.ingest.vertx.ops;
+
+import io.micrometer.core.instrument.*;
+import org.springframework.stereotype.Component;
+
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.IntSupplier;
+
+@Component
+public class IngestMetrics {
+
+  private final Counter searchOk;
+  private final Counter searchFail;
+  private final Timer searchTimer;
+
+  private final Counter detailOk;
+  private final Counter detailFail;
+  private final Timer detailTimer;
+
+  private final AtomicLong processed = new AtomicLong();
+  private final AtomicInteger inflightSearch = new AtomicInteger();
+  private final AtomicInteger inflightDetail = new AtomicInteger();
+
+  public IngestMetrics(MeterRegistry reg) {
+
+    searchOk = reg.counter("ingest.search.ok");
+    searchFail = reg.counter("ingest.search.fail");
+    searchTimer = reg.timer("ingest.search.latency");
+
+    detailOk = reg.counter("ingest.detail.ok");
+    detailFail = reg.counter("ingest.detail.fail");
+    detailTimer = reg.timer("ingest.detail.latency");
+
+    reg.gauge("ingest.processed", processed);
+    reg.gauge("ingest.inflight.search", inflightSearch);
+    reg.gauge("ingest.inflight.detail", inflightDetail);
+  }
+
+  public Timer.Sample startSearch() {
+    inflightSearch.incrementAndGet();
+    return Timer.start();
+  }
+
+  public void endSearchOk(Timer.Sample s) {
+    inflightSearch.decrementAndGet();
+    searchOk.increment();
+    s.stop(searchTimer);
+  }
+
+  public void endSearchFail(Timer.Sample s) {
+    inflightSearch.decrementAndGet();
+    searchFail.increment();
+    s.stop(searchTimer);
+  }
+
+  public Timer.Sample startDetail() {
+    inflightDetail.incrementAndGet();
+    return Timer.start();
+  }
+
+  public void endDetailOk(Timer.Sample s) {
+    inflightDetail.decrementAndGet();
+    detailOk.increment();
+    s.stop(detailTimer);
+    processed.incrementAndGet();
+  }
+
+  public void endDetailFail(Timer.Sample s) {
+    inflightDetail.decrementAndGet();
+    detailFail.increment();
+    s.stop(detailTimer);
+  }
+
+  public void registerQueueGauge(MeterRegistry reg, IntSupplier sizeFn) {
+    Gauge.builder("ingest.queue.size", sizeFn)
+      .register(reg);
+  }
+}
