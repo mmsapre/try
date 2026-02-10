@@ -1,0 +1,39 @@
+package com.example.ingest.vertx.ops;
+
+import io.vertx.core.Future;
+import io.vertx.core.Promise;
+import io.vertx.core.Vertx;
+import io.vertx.core.shareddata.Semaphore;
+
+public class RateGate {
+
+  private final Vertx vertx;
+  private final Semaphore sem;
+  private final long delayMs;
+
+  public RateGate(Vertx vertx, String name, int maxConcurrency, long delayMs) {
+    this.vertx = vertx;
+    this.sem = vertx.sharedData().getSemaphore(name, maxConcurrency);
+    this.delayMs = delayMs;
+  }
+
+  public Future<Void> acquire() {
+    Promise<Void> p = Promise.promise();
+    sem.acquire(1, ar -> {
+      if (ar.failed()) {
+        p.fail(ar.cause());
+        return;
+      }
+      if (delayMs <= 0) {
+        p.complete();
+      } else {
+        vertx.setTimer(delayMs, t -> p.complete());
+      }
+    });
+    return p.future();
+  }
+
+  public void release() {
+    sem.release(1);
+  }
+}
