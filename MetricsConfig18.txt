@@ -1,0 +1,11 @@
+@Configuration
+public class MetricsConfig {
+
+  @Bean
+  public Object queueGaugeBinder(MeterRegistry reg,
+                                IdQueue queue,
+                                IngestMetrics metrics) {
+    metrics.registerQueueGauge(reg, queue::size);
+    return new Object();
+  }
+}
