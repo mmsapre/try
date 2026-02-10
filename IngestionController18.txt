@@ -1,0 +1,95 @@
+package com.example.ingest.vertx.http;
+
+import com.example.ingest.vertx.service.IngestionService;
+import io.vertx.core.json.JsonArray;
+import io.vertx.ext.web.Router;
+import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.handler.BodyHandler;
+import org.springframework.stereotype.Component;
+
+import java.util.UUID;
+
+@Component
+public class IngestionController {
+
+  private final IngestionService ingestionService;
+
+  public IngestionController(IngestionService ingestionService) {
+    this.ingestionService = ingestionService;
+  }
+
+  /** Mount all ingestion-related routes */
+  public void mount(Router router) {
+
+    router.post("/ingest/ingest")
+      .handler(BodyHandler.create())
+      .handler(this::startIngestion);
+
+    router.get("/ingest/:runId/status")
+      .handler(this::status);
+  }
+
+  /**
+   * POST /ingest/ingest
+   *
+   * Body:
+   * [
+   *   { "gt": "...", "lt": "..." }
+   * ]
+   */
+  private void startIngestion(RoutingContext ctx) {
+
+    JsonArray body;
+
+    try {
+      body = ctx.getBodyAsJsonArray();
+    } catch (Exception e) {
+      ctx.response()
+        .setStatusCode(400)
+        .end("Invalid JSON body");
+      return;
+    }
+
+    if (body == null || body.isEmpty()) {
+      ctx.response()
+        .setStatusCode(400)
+        .end("Body must contain upd range array");
+      return;
+    }
+
+    // 🔥 create run id
+    UUID runId = UUID.randomUUID();
+
+    // 🔥 fire-and-forget ingestion
+    ingestionService.runOnce(runId, body.encode());
+
+    // 🔥 respond immediately
+    ctx.response()
+      .setStatusCode(202)
+      .putHeader("Content-Type", "application/json")
+      .end("""
+        {
+          "status": "STARTED",
+          "runId": "%s"
+        }
+      """.formatted(runId));
+  }
+
+  /**
+   * GET /ingest/{runId}/status
+   * (optional lightweight endpoint)
+   */
+  private void status(RoutingContext ctx) {
+
+    String runId = ctx.pathParam("runId");
+
+    ctx.response()
+      .putHeader("Content-Type", "application/json")
+      .end("""
+        {
+          "runId": "%s",
+          "state": "RUNNING"
+        }
+      """.formatted(runId));
+  }
+}
