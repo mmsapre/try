@@ -1,0 +1,10 @@
+@Component
+public class IdQueue {
+
+  private final BlockingQueue<String> q =
+    new LinkedBlockingQueue<>(200_000);
+
+  public void add(String id) { q.offer(id); }
+  public String poll() { return q.poll(); }
+  public int size() { return q.size(); }
+}
