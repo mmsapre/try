@@ -1,0 +1,80 @@
+package com.example.ingest.vertx.service;
+
+import com.example.ingest.vertx.api.RemoteApiClient;
+import com.example.ingest.vertx.config.IngestProps;
+import com.example.ingest.vertx.ops.IngestMetrics;
+import com.example.ingest.vertx.ops.RateGate;
+import io.micrometer.core.instrument.Timer;
+import io.vertx.core.Vertx;
+import io.vertx.core.WorkerExecutor;
+import org.springframework.stereotype.Component;
+
+import jakarta.annotation.PostConstruct;
+
+@Component
+public class DetailPump {
+
+  private final Vertx vertx;
+  private final WorkerExecutor workers;
+  private final IdQueue queue;
+  private final RemoteApiClient api;
+  private final IngestProps props;
+  private final IngestMetrics metrics;
+  private final RateGate detailGate;
+
+  public DetailPump(Vertx vertx,
+                    WorkerExecutor workers,
+                    IdQueue queue,
+                    RemoteApiClient api,
+                    IngestProps props,
+                    IngestMetrics metrics) {
+    this.vertx = vertx;
+    this.workers = workers;
+    this.queue = queue;
+    this.api = api;
+    this.props = props;
+    this.metrics = metrics;
+
+    this.detailGate = new RateGate(
+      vertx,
+      "detail-gate",
+      props.getDetail().getMaxConcurrency(),
+      props.getDetail().getDelayMs()
+    );
+  }
+
+  @PostConstruct
+  void start() {
+
+    vertx.setPeriodic(props.getPump().getPeriodMs(), tick -> {
+
+      for (int i = 0; i < props.getPump().getBatch(); i++) {
+
+        String id = queue.poll();
+        if (id == null) return;
+
+        // use worker pool for everything beyond scheduling
+        workers.executeBlocking(promise -> {
+
+          Timer.Sample sample = metrics.startDetail();
+
+          detailGate.acquire()
+            .compose(v -> api.fetchDetails(id))
+            .onSuccess(detail -> {
+              // DB insert + JMS publish here (blocking or async)
+              metrics.endDetailOk(sample);
+              promise.complete();
+            })
+            .onFailure(err -> {
+              metrics.endDetailFail(sample);
+              promise.fail(err);
+            })
+            .onComplete(v -> detailGate.release());
+
+        }, false, res -> {
+          // result handler (optional logging)
+        });
+      }
+    });
+  }
+}
